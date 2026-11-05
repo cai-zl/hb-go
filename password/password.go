@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 
-	"hb"
+	"github.com/cai-zl/hb-go"
 )
 
 // HashAlg 是密码哈希算法标识。

@@ -12,6 +12,7 @@ HTTP 响应**永远 200**(错误只体现在 `code`);仅框架级错误(404/405�
 保留真实状态码并带信封 body。
 
 ## 包一览
+module 路径 `github.com/cai-zl/hb-go`,下表包名为简写。
 
 | 包 | 内容 |
 | --- | --- |
@@ -32,12 +33,12 @@ HTTP 响应**永远 200**(错误只体现在 `code`);仅框架级错误(404/405�
 
 ## 快速开始
 
-`go get` 本库(module `hb`)后,在**业务 module 根目录**直接写 `main.go`
+`go get github.com/cai-zl/hb-go` 后,在**业务 module 根目录**直接写 `main.go`
 (与 `go.mod` 同级,不需要 `cmd/` 目录):
 
 ```
 yourapp/
-├── go.mod               // module yourapp;require hb
+├── go.mod               // module yourapp;require github.com/cai-zl/hb-go
 ├── main.go              // ← 与 go.mod 同级
 ├── migrations/
 │   └── 0001_init.sql    // 序号_描述.sql,经 go:embed 交给迁移器
@@ -59,7 +60,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // 选定 pg:驱动由业务 import
 
 	"hb"
-	"hb/boot"
+	"github.com/cai-zl/hb-go/boot"
 )
 
 //go:embed migrations/*.sql

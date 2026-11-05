@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"hb"
+	"github.com/cai-zl/hb-go"
 )
 
 func get(t *testing.T, h gin.HandlerFunc) (*httptest.ResponseRecorder, map[string]any) {

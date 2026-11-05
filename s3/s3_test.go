@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"hb"
-	"hb/s3"
+	"github.com/cai-zl/hb-go"
+	"github.com/cai-zl/hb-go/s3"
 )
 
 func msgOf(t *testing.T, err error) string {

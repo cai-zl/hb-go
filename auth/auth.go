@@ -16,8 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	goredis "github.com/redis/go-redis/v9"
 
-	"hb"
-	"hb/crypto"
+	"github.com/cai-zl/hb-go"
+	"github.com/cai-zl/hb-go/crypto"
 )
 
 // Config 对应 TOML [auth] 段,全部有缺省值。

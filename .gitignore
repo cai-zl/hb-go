@@ -1,0 +1,60 @@
+# ---- 构建产物 ----
+target/
+node_modules/
+dist/
+*.tsbuildinfo
+# ---- AI 工具本地状态/配置(防误提交) ----
+.pi/
+.claude/
+CLAUDE.local.md
+.claude.json
+.cursor/
+.cursorignore
+.cursorrules
+.aider*
+.copilot*
+.github/copilot*
+.codeium/
+.windsurf/
+.continue/
+.cline/
+.roo/
+.gemini/
+.qwen/
+.serena/
+.kiro/
+.trae/
+.augment*
+.repomix*
+.codebuddy/
+AGENTS.local.md
+
+# ---- Go ----
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+vendor/
+bin/
+dist/
+
+# ---- 测试/覆盖率 ----
+*.cov
+coverage.*
+html-cover*
+
+# ---- 密钥/环境变量 ----
+.env
+.env.*
+!.env.example
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

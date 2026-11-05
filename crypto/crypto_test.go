@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"hb/crypto"
+	"github.com/cai-zl/hb-go/crypto"
 )
 
 // ---- 摘要 ----

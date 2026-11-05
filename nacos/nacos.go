@@ -17,7 +17,7 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 	"github.com/pelletier/go-toml/v2"
 
-	"hb"
+	"github.com/cai-zl/hb-go"
 )
 
 // Config 环境变量语义的连接参数(DataID/Group 仅 FromEnv 填充)。

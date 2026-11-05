@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"hb"
-	"hb/redis"
+	"github.com/cai-zl/hb-go"
+	"github.com/cai-zl/hb-go/redis"
 )
 
 func msgOf(t *testing.T, err error) string {

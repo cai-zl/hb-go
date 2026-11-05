@@ -13,7 +13,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"hb"
+	"github.com/cai-zl/hb-go"
 )
 
 // SHA256 返回 64 字符小写 hex。

@@ -21,7 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 
-	"hb"
+	"github.com/cai-zl/hb-go"
 )
 
 // Config 对应 TOML [db] 段,driver 与 url 必填,其余有缺省值。

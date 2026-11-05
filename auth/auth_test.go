@@ -12,9 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"hb"
-	"hb/auth"
-	"hb/redis"
+	"github.com/cai-zl/hb-go"
+	"github.com/cai-zl/hb-go/auth"
+	"github.com/cai-zl/hb-go/redis"
 )
 
 type sessionData struct {

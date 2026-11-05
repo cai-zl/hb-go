@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"hb"
-	"hb/password"
+	"github.com/cai-zl/hb-go"
+	"github.com/cai-zl/hb-go/password"
 
 	"golang.org/x/crypto/argon2"
 )

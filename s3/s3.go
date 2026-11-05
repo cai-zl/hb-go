@@ -13,7 +13,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
-	"hb"
+	"github.com/cai-zl/hb-go"
 )
 
 // maxPresignTTL 预签名有效期上限:7 天,与 AWS SigV4 上限一致。

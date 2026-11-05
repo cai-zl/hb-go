@@ -10,8 +10,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"hb"
-	"hb/ws"
+	"github.com/cai-zl/hb-go"
+	"github.com/cai-zl/hb-go/ws"
 )
 
 // echoServer: 收到文本回发信封 {code:0,message:"echo",data:<原文>};

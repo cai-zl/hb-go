@@ -8,7 +8,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"hb"
+	"github.com/cai-zl/hb-go"
 )
 
 // Config 对应 TOML [redis] 段,url 必填。

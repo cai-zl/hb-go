@@ -1,4 +1,4 @@
-module hb
+module github.com/cai-zl/hb-go
 
 go 1.27.3
 

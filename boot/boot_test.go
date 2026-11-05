@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"hb"
-	"hb/auth"
-	"hb/boot"
+	"github.com/cai-zl/hb-go"
+	"github.com/cai-zl/hb-go/auth"
+	"github.com/cai-zl/hb-go/boot"
 )
 
 func mustParse(t *testing.T, text string) *boot.Config {

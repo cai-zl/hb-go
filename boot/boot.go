@@ -30,13 +30,13 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	goredis "github.com/redis/go-redis/v9"
 
-	"hb"
-	"hb/auth"
-	"hb/db"
-	"hb/nacos"
-	hbredis "hb/redis"
-	"hb/s3"
-	"hb/ws"
+	"github.com/cai-zl/hb-go"
+	"github.com/cai-zl/hb-go/auth"
+	"github.com/cai-zl/hb-go/db"
+	"github.com/cai-zl/hb-go/nacos"
+	hbredis "github.com/cai-zl/hb-go/redis"
+	"github.com/cai-zl/hb-go/s3"
+	"github.com/cai-zl/hb-go/ws"
 )
 
 // Mount 业务路由挂载:App 组装完成后、监听前调用——请求期经 app 取

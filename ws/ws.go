@@ -16,7 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"hb"
+	"github.com/cai-zl/hb-go"
 )
 
 // Heartbeat 服务端 Ping 周期。
