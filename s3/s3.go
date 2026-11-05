@@ -13,14 +13,14 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
-	"hg"
+	"hb"
 )
 
 // maxPresignTTL 预签名有效期上限:7 天,与 AWS SigV4 上限一致。
 const maxPresignTTL = 7 * 24 * time.Hour
 
 // ErrNotFound 是对象不存在时的哨兵错误(信封 {"code":404,"message":"object not found"})。
-var ErrNotFound = hg.Err(404, "object not found")
+var ErrNotFound = hb.Err(404, "object not found")
 
 // Config 对应 TOML [s3] 段,endpoint/bucket/access_key_id/secret_access_key 必填。
 type Config struct {
@@ -43,11 +43,11 @@ type S3 struct {
 func Connect(cfg Config) (*S3, error) {
 	switch {
 	case cfg.Endpoint == "":
-		return nil, hg.Err(500, "s3 config: endpoint is required")
+		return nil, hb.Err(500, "s3 config: endpoint is required")
 	case cfg.Bucket == "":
-		return nil, hg.Err(500, "s3 config: bucket is required")
+		return nil, hb.Err(500, "s3 config: bucket is required")
 	case cfg.AccessKeyID == "" || cfg.SecretAccessKey == "":
-		return nil, hg.Err(500, "s3 config: access_key_id and secret_access_key are required")
+		return nil, hb.Err(500, "s3 config: access_key_id and secret_access_key are required")
 	}
 	secure := false
 	endpoint := cfg.Endpoint
@@ -70,17 +70,17 @@ func Connect(cfg Config) (*S3, error) {
 		BucketLookup: bucketLookup,
 	})
 	if err != nil {
-		return nil, hg.Internal(err)
+		return nil, hb.Internal(err)
 	}
 	s := &S3{client: client, bucket: cfg.Bucket}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	ok, err := client.BucketExists(ctx, s.bucket)
 	if err != nil {
-		return nil, hg.Internal(err)
+		return nil, hb.Internal(err)
 	}
 	if !ok {
-		return nil, hg.Errf(500, "s3: bucket %q not found", cfg.Bucket)
+		return nil, hb.Errf(500, "s3: bucket %q not found", cfg.Bucket)
 	}
 	return s, nil
 }
@@ -103,7 +103,7 @@ func (s *S3) Put(key string, data []byte, contentType string) error {
 		strings.NewReader(string(data)), int64(len(data)),
 		minio.PutObjectOptions{ContentType: contentType})
 	if err != nil {
-		return hg.Internal(err)
+		return hb.Internal(err)
 	}
 	return nil
 }
@@ -115,7 +115,7 @@ func (s *S3) Get(key string) ([]byte, error) {
 		if isNotFound(err) {
 			return nil, ErrNotFound
 		}
-		return nil, hg.Internal(err)
+		return nil, hb.Internal(err)
 	}
 	defer obj.Close()
 	data, err := io.ReadAll(obj)
@@ -123,7 +123,7 @@ func (s *S3) Get(key string) ([]byte, error) {
 		if isNotFound(err) {
 			return nil, ErrNotFound
 		}
-		return nil, hg.Internal(err)
+		return nil, hb.Internal(err)
 	}
 	return data, nil
 }
@@ -134,7 +134,7 @@ func (s *S3) Delete(key string) error {
 		if isNotFound(err) {
 			return nil
 		}
-		return hg.Internal(err)
+		return hb.Internal(err)
 	}
 	return nil
 }
@@ -148,17 +148,17 @@ func (s *S3) Exists(key string) (bool, error) {
 	if isNotFound(err) {
 		return false, nil
 	}
-	return false, hg.Internal(err)
+	return false, hb.Internal(err)
 }
 
 // PresignGet 生成下载预签名 URL,有效期上限 7 天。
 func (s *S3) PresignGet(key string, ttl time.Duration) (string, error) {
 	if ttl <= 0 || ttl > maxPresignTTL {
-		return "", hg.Errf(500, "presign: ttl must be 1..%s", maxPresignTTL)
+		return "", hb.Errf(500, "presign: ttl must be 1..%s", maxPresignTTL)
 	}
 	u, err := s.client.PresignedGetObject(context.Background(), s.bucket, key, ttl, nil)
 	if err != nil {
-		return "", hg.Internal(err)
+		return "", hb.Internal(err)
 	}
 	return u.String(), nil
 }
@@ -166,12 +166,12 @@ func (s *S3) PresignGet(key string, ttl time.Duration) (string, error) {
 // PresignPut 生成上传预签名 URL,有效期上限 7 天。
 func (s *S3) PresignPut(key string, ttl time.Duration, contentType string) (string, error) {
 	if ttl <= 0 || ttl > maxPresignTTL {
-		return "", hg.Errf(500, "presign: ttl must be 1..%s", maxPresignTTL)
+		return "", hb.Errf(500, "presign: ttl must be 1..%s", maxPresignTTL)
 	}
 	// shortcut: minio-go 预签名不签 Content-Type,客户端上传时自带该头;参数仅为 API 对齐
 	u, err := s.client.PresignedPutObject(context.Background(), s.bucket, key, ttl)
 	if err != nil {
-		return "", hg.Internal(err)
+		return "", hb.Internal(err)
 	}
 	return u.String(), nil
 }

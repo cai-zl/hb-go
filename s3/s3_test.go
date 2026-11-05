@@ -7,24 +7,24 @@ import (
 	"testing"
 	"time"
 
-	"hg"
-	"hg/s3"
+	"hb"
+	"hb/s3"
 )
 
 func msgOf(t *testing.T, err error) string {
 	t.Helper()
-	var e *hg.Error
+	var e *hb.Error
 	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hg.Error, got %v", err)
+		t.Fatalf("want *hb.Error, got %v", err)
 	}
 	return e.Message
 }
 
 func codeOf(t *testing.T, err error) int {
 	t.Helper()
-	var e *hg.Error
+	var e *hb.Error
 	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hg.Error, got %v", err)
+		t.Fatalf("want *hb.Error, got %v", err)
 	}
 	return e.Code
 }
@@ -67,7 +67,7 @@ func integrationS3(t *testing.T) *s3.S3 {
 
 func TestS3RoundTrip(t *testing.T) {
 	s := integrationS3(t)
-	key := "hg-test/roundtrip.txt"
+	key := "hb-test/roundtrip.txt"
 
 	if err := s.Put(key, []byte("hello s3"), "text/plain"); err != nil {
 		t.Fatalf("put: %v", err)
@@ -80,7 +80,7 @@ func TestS3RoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("exists = %v (err %v), want true", ok, err)
 	}
-	if _, err := s.Get("hg-test/missing.txt"); err == nil || codeOf(t, err) != 404 {
+	if _, err := s.Get("hb-test/missing.txt"); err == nil || codeOf(t, err) != 404 {
 		t.Fatalf("missing err = %v, want 404 object not found", err)
 	}
 	u, err := s.PresignGet(key, 60)

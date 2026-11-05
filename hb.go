@@ -1,10 +1,10 @@
-// Package hg 提供统一 HTTP 响应信封:业务响应 HTTP 状态恒为 200,
+// Package hb 提供统一 HTTP 响应信封:业务响应 HTTP 状态恒为 200,
 // body 形如 {"code":0,"message":"ok","data":...}。
 //
 // handler 由 Wrap 适配:业务返回 (any, error),nil error 写成功信封,
 // 非 nil error 写失败信封;非 *Error 的裸 error 统一掩码为 internal error,
 // 原文进日志。
-package hg
+package hb
 
 import (
 	"errors"
@@ -106,7 +106,7 @@ type Paged struct {
 	PageSize uint64 `json:"pageSize"`
 }
 
-// Page 构造分页 data:handler 里 return hg.Page(users, 2, 1, 20), nil。
+// Page 构造分页 data:handler 里 return hb.Page(users, 2, 1, 20), nil。
 func Page(list any, total, page, pageSize uint64) *Paged {
 	return &Paged{List: list, Total: total, Page: page, PageSize: pageSize}
 }
@@ -129,7 +129,7 @@ func Wrap(fn func(c *gin.Context) (any, error)) gin.HandlerFunc {
 }
 
 // New 返回预装框架级错误信封的 gin 引擎:未匹配路由 404、方法不允许 405,
-// 保留真实状态码。Recovery 仍需显式 e.Use(hg.Recovery())。
+// 保留真实状态码。Recovery 仍需显式 e.Use(hb.Recovery())。
 func New() *gin.Engine {
 	e := gin.New()
 	e.NoRoute(func(c *gin.Context) {

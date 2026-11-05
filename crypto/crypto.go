@@ -13,7 +13,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"hg"
+	"hb"
 )
 
 // SHA256 返回 64 字符小写 hex。
@@ -46,7 +46,7 @@ func deriveKey(key string) []byte {
 func Encrypt(key string, plaintext []byte) (string, error) {
 	gcm, err := gcmFor(key)
 	if err != nil {
-		return "", hg.Internal(err)
+		return "", hb.Internal(err)
 	}
 	nonce := make([]byte, gcm.NonceSize())
 	_, _ = rand.Read(nonce)
@@ -59,7 +59,7 @@ func Encrypt(key string, plaintext []byte) (string, error) {
 func Decrypt(key, encoded string) ([]byte, error) {
 	fail := func(err error) ([]byte, error) {
 		slog.Debug("decrypt failed", "err", err)
-		return nil, hg.Err(500, "crypto: decrypt failed")
+		return nil, hb.Err(500, "crypto: decrypt failed")
 	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
@@ -80,7 +80,7 @@ func Decrypt(key, encoded string) ([]byte, error) {
 	return out, nil
 }
 
-// 返回纯 error 而非 *hg.Error:typed-nil 具体类型装进接口后 err != nil 恒真,
+// 返回纯 error 而非 *hb.Error:typed-nil 具体类型装进接口后 err != nil 恒真,
 // 会把每次成功路径误判为失败。
 func gcmFor(key string) (cipher.AEAD, error) {
 	block, err := aes.NewCipher(deriveKey(key))

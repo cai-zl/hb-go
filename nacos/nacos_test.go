@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"hg"
-	"hg/nacos"
+	"hb"
+	"hb/nacos"
 )
 
 func msgOf(t *testing.T, err error) string {
 	t.Helper()
-	var e *hg.Error
+	var e *hb.Error
 	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hg.Error, got %v", err)
+		t.Fatalf("want *hb.Error, got %v", err)
 	}
 	return e.Message
 }
@@ -35,7 +35,7 @@ func TestFromEnvDefaults(t *testing.T) {
 	if cfg.Namespace != "public" || cfg.Group != "DEFAULT_GROUP" {
 		t.Fatalf("cfg = %+v, want public/DEFAULT_GROUP defaults", cfg)
 	}
-	if cfg.DataID == "" || cfg.DataID == "hg.test" || strings.Contains(cfg.DataID, "/") {
+	if cfg.DataID == "" || cfg.DataID == "hb.test" || strings.Contains(cfg.DataID, "/") {
 		// 缺省为二进制名(go test 二进制),含路径或空都算错
 		if cfg.DataID == "" {
 			t.Fatalf("DataID default empty, cfg = %+v", cfg)
@@ -46,7 +46,7 @@ func TestFromEnvDefaults(t *testing.T) {
 func TestFromEnvOverrides(t *testing.T) {
 	t.Setenv("NACOS_SERVER_ADDR", "nacos-1:8848,nacos-2:8848")
 	t.Setenv("NACOS_NAMESPACE", "dev")
-	t.Setenv("NACOS_DATA_ID", "hg.toml")
+	t.Setenv("NACOS_DATA_ID", "hb.toml")
 	t.Setenv("NACOS_GROUP", "MY_GROUP")
 	t.Setenv("NACOS_USERNAME", "u")
 	t.Setenv("NACOS_PASSWORD", "p")
@@ -54,7 +54,7 @@ func TestFromEnvOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Namespace != "dev" || cfg.DataID != "hg.toml" || cfg.Group != "MY_GROUP" {
+	if cfg.Namespace != "dev" || cfg.DataID != "hb.toml" || cfg.Group != "MY_GROUP" {
 		t.Fatalf("cfg = %+v", cfg)
 	}
 	if cfg.Username != "u" || cfg.Password != "p" {
@@ -101,16 +101,16 @@ func TestNacosIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	text, found, err := client.GetConfig("hg-test.toml", "DEFAULT_GROUP")
+	text, found, err := client.GetConfig("hb-test.toml", "DEFAULT_GROUP")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	_ = text
 	_ = found
-	if err := client.Register("hg-test-svc", "127.0.0.1", 18080, "DEFAULT_GROUP"); err != nil {
+	if err := client.Register("hb-test-svc", "127.0.0.1", 18080, "DEFAULT_GROUP"); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	if err := client.Deregister("hg-test-svc", "127.0.0.1", 18080, "DEFAULT_GROUP"); err != nil {
+	if err := client.Deregister("hb-test-svc", "127.0.0.1", 18080, "DEFAULT_GROUP"); err != nil {
 		t.Fatalf("deregister: %v", err)
 	}
 }

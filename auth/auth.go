@@ -16,8 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	goredis "github.com/redis/go-redis/v9"
 
-	"hg"
-	"hg/crypto"
+	"hb"
+	"hb/crypto"
 )
 
 // Config 对应 TOML [auth] 段,全部有缺省值。
@@ -99,11 +99,11 @@ func newToken() string { return crypto.RandomHex(32) }
 func recordJSON(data any, peer string, exp int64) (string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
-		return "", hg.Internal(err)
+		return "", hb.Internal(err)
 	}
 	rec, err := json.Marshal(SessionRecord{Data: raw, Peer: peer, Exp: exp})
 	if err != nil {
-		return "", hg.Internal(err)
+		return "", hb.Internal(err)
 	}
 	return string(rec), nil
 }
@@ -111,7 +111,7 @@ func recordJSON(data any, peer string, exp int64) (string, error) {
 func parseRecord(raw string) (SessionRecord, error) {
 	var rec SessionRecord
 	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-		return rec, hg.Errf(500, "auth: session record corrupted: %v", err)
+		return rec, hb.Errf(500, "auth: session record corrupted: %v", err)
 	}
 	return rec, nil
 }
@@ -130,10 +130,10 @@ func (s *Sessions) Create(data any) (TokenPair, error) {
 	}
 	ctx := context.Background()
 	if err := s.client.Set(ctx, s.atKey(at), recAT, s.refreshTTL).Err(); err != nil {
-		return TokenPair{}, hg.Internal(err)
+		return TokenPair{}, hb.Internal(err)
 	}
 	if err := s.client.Set(ctx, s.rtKey(rt), recRT, s.refreshTTL).Err(); err != nil {
-		return TokenPair{}, hg.Internal(err)
+		return TokenPair{}, hb.Internal(err)
 	}
 	return TokenPair{AccessToken: at, RefreshToken: rt}, nil
 }
@@ -146,7 +146,7 @@ func (s *Sessions) Get(token string) (SessionRecord, bool, error) {
 		return SessionRecord{}, false, nil
 	}
 	if gerr != nil {
-		return SessionRecord{}, false, hg.Internal(gerr)
+		return SessionRecord{}, false, hb.Internal(gerr)
 	}
 	rec, err := parseRecord(raw)
 	if err != nil {
@@ -167,7 +167,7 @@ func (s *Sessions) Refresh(refreshToken string) (TokenPair, bool, error) {
 		return TokenPair{}, false, nil
 	}
 	if gerr != nil {
-		return TokenPair{}, false, hg.Internal(gerr)
+		return TokenPair{}, false, hb.Internal(gerr)
 	}
 	rec, err := parseRecord(raw)
 	if err != nil {
@@ -185,14 +185,14 @@ func (s *Sessions) Refresh(refreshToken string) (TokenPair, bool, error) {
 	}
 	ctx := context.Background()
 	if err := s.client.Set(ctx, s.atKey(at), recAT, s.refreshTTL).Err(); err != nil {
-		return TokenPair{}, false, hg.Internal(err)
+		return TokenPair{}, false, hb.Internal(err)
 	}
 	if err := s.client.Set(ctx, s.rtKey(rt), recRT, s.refreshTTL).Err(); err != nil {
-		return TokenPair{}, false, hg.Internal(err)
+		return TokenPair{}, false, hb.Internal(err)
 	}
 	// 旧 access = r: 记录里的 peer;旧 refresh = 当前键
 	if err := s.client.Del(ctx, s.atKey(rec.Peer), rk).Err(); err != nil {
-		return TokenPair{}, false, hg.Internal(err)
+		return TokenPair{}, false, hb.Internal(err)
 	}
 	return TokenPair{AccessToken: at, RefreshToken: rt}, true, nil
 }
@@ -204,7 +204,7 @@ func (s *Sessions) Revoke(accessToken string) (bool, error) {
 		return false, nil
 	}
 	if gerr != nil {
-		return false, hg.Internal(gerr)
+		return false, hb.Internal(gerr)
 	}
 	rec, err := parseRecord(raw)
 	if err != nil {
@@ -216,7 +216,7 @@ func (s *Sessions) Revoke(accessToken string) (bool, error) {
 		keys = append(keys, s.rtKey(rec.Peer))
 	}
 	if err := s.client.Del(ctx, keys...).Err(); err != nil {
-		return false, hg.Internal(err)
+		return false, hb.Internal(err)
 	}
 	return true, nil
 }
@@ -229,11 +229,11 @@ func (s *Sessions) Touch(accessToken string) (bool, error) {
 	}
 	ctx := context.Background()
 	if err := s.client.Expire(ctx, s.atKey(accessToken), s.refreshTTL).Err(); err != nil {
-		return false, hg.Internal(err)
+		return false, hb.Internal(err)
 	}
 	if rec.Peer != "" {
 		if err := s.client.Expire(ctx, s.rtKey(rec.Peer), s.refreshTTL).Err(); err != nil {
-			return false, hg.Internal(err)
+			return false, hb.Internal(err)
 		}
 	}
 	return true, nil
@@ -255,7 +255,7 @@ func bearer(header string) string {
 }
 
 func unauthorized(c *gin.Context, msg string) {
-	hg.Write(c, http.StatusUnauthorized, hg.Envelope{Code: 401, Message: msg})
+	hb.Write(c, http.StatusUnauthorized, hb.Envelope{Code: 401, Message: msg})
 	c.Abort()
 }
 
@@ -271,11 +271,11 @@ func Guard(sessions *Sessions) gin.HandlerFunc {
 		rec, ok, err := sessions.Get(token)
 		if err != nil {
 			// Redis 故障等基础设施错误:保留 500 信封,不冒充 401
-			var e *hg.Error
+			var e *hb.Error
 			if !errors.As(err, &e) {
-				e = &hg.Error{Code: 500, Message: "internal error"}
+				e = &hb.Error{Code: 500, Message: "internal error"}
 			}
-			hg.Write(c, http.StatusOK, hg.Envelope{Code: e.Code, Message: e.Message})
+			hb.Write(c, http.StatusOK, hb.Envelope{Code: e.Code, Message: e.Message})
 			c.Abort()
 			return
 		}
@@ -299,12 +299,12 @@ func From[T any](c *gin.Context) (T, error) {
 	var zero T
 	v, exists := c.Get(ctxKeySession)
 	if !exists {
-		return zero, hg.Err(401, "unauthorized")
+		return zero, hb.Err(401, "unauthorized")
 	}
 	rec, _ := v.(SessionRecord)
 	var data T
 	if err := json.Unmarshal(rec.Data, &data); err != nil {
-		return zero, hg.Errf(500, "auth: session data type mismatch: %v", err)
+		return zero, hb.Errf(500, "auth: session data type mismatch: %v", err)
 	}
 	return data, nil
 }
@@ -341,10 +341,10 @@ func tokenResponse(pair TokenPair, sessions *Sessions) TokenResponse {
 // 返回错误时原样透传成 200+业务码信封(凭据错误语义)。
 func Routes(sessions *Sessions, check func(LoginReq) (any, error)) func(*gin.RouterGroup) {
 	return func(rg *gin.RouterGroup) {
-		rg.POST("/auth/token", hg.Wrap(func(c *gin.Context) (any, error) {
+		rg.POST("/auth/token", hb.Wrap(func(c *gin.Context) (any, error) {
 			var req LoginReq
 			if err := c.ShouldBindJSON(&req); err != nil {
-				return nil, hg.Err(400, "invalid request body")
+				return nil, hb.Err(400, "invalid request body")
 			}
 			data, err := check(req)
 			if err != nil {
@@ -356,24 +356,24 @@ func Routes(sessions *Sessions, check func(LoginReq) (any, error)) func(*gin.Rou
 			}
 			return tokenResponse(pair, sessions), nil
 		}))
-		rg.POST("/auth/refresh", hg.Wrap(func(c *gin.Context) (any, error) {
+		rg.POST("/auth/refresh", hb.Wrap(func(c *gin.Context) (any, error) {
 			var req RefreshReq
 			if err := c.ShouldBindJSON(&req); err != nil {
-				return nil, hg.Err(400, "invalid request body")
+				return nil, hb.Err(400, "invalid request body")
 			}
 			pair, ok, err := sessions.Refresh(req.RefreshToken)
 			if err != nil {
 				return nil, err
 			}
 			if !ok {
-				return nil, hg.Err(401, "invalid refresh token")
+				return nil, hb.Err(401, "invalid refresh token")
 			}
 			return tokenResponse(pair, sessions), nil
 		}))
-		rg.POST("/auth/revoke", hg.Wrap(func(c *gin.Context) (any, error) {
+		rg.POST("/auth/revoke", hb.Wrap(func(c *gin.Context) (any, error) {
 			var req RevokeReq
 			if err := c.ShouldBindJSON(&req); err != nil {
-				return nil, hg.Err(400, "invalid request body")
+				return nil, hb.Err(400, "invalid request body")
 			}
 			if _, err := sessions.Revoke(req.AccessToken); err != nil {
 				return nil, err
@@ -388,18 +388,18 @@ func Routes(sessions *Sessions, check func(LoginReq) (any, error)) func(*gin.Rou
 			}
 			rec, ok, err := sessions.Get(token)
 			if err != nil {
-				var e *hg.Error
+				var e *hb.Error
 				if !errors.As(err, &e) {
-					e = &hg.Error{Code: 500, Message: "internal error"}
+					e = &hb.Error{Code: 500, Message: "internal error"}
 				}
-				hg.Write(c, http.StatusOK, hg.Envelope{Code: e.Code, Message: e.Message})
+				hb.Write(c, http.StatusOK, hb.Envelope{Code: e.Code, Message: e.Message})
 				return
 			}
 			if !ok {
 				unauthorized(c, "unauthorized")
 				return
 			}
-			hg.Write(c, http.StatusOK, hg.Envelope{Code: 0, Message: "ok", Data: json.RawMessage(rec.Data)})
+			hb.Write(c, http.StatusOK, hb.Envelope{Code: 0, Message: "ok", Data: json.RawMessage(rec.Data)})
 		})
 	}
 }

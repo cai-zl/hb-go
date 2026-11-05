@@ -1,4 +1,4 @@
-# hg
+# hb
 
 Go 生态风格的统一 HTTP 响应信封库 + 一键启动套件。业务 handler 只写 `(any, error)`,
 框架负责把一切归一成统一 JSON 信封。
@@ -15,29 +15,29 @@ HTTP 响应**永远 200**(错误只体现在 `code`);仅框架级错误(404/405�
 
 | 包 | 内容 |
 | --- | --- |
-| `hg` | 信封、`Wrap((any, error))`、`Err/Errf/Internal`、`Page`、`Recovery`、`New()` 引擎 |
-| `hg/boot` | 配置加载、Nacos 接入、依赖组装、`Serve/ServeWith`、健康检查、热更 |
-| `hg/db` | 多方言连接池(pg/mysql/sqlite)+ 序号迁移器(`hg_migrations` 记账) |
-| `hg/redis` | go-redis 客户端 |
-| `hg/s3` | minio 客户端(上传/下载/删除/预签名) |
-| `hg/nacos` | 配置中心 + 服务注册 |
-| `hg/ws` | WebSocket Hub(广播/定向/心跳) |
-| `hg/auth` | Redis 会话 + OAuth2 风格四端点 |
-| `hg/crypto` | AES-256-GCM、SHA256/HMAC、随机数 |
-| `hg/password` | argon2id/bcrypt/pbkdf2 哈希与校验 |
+| `hb` | 信封、`Wrap((any, error))`、`Err/Errf/Internal`、`Page`、`Recovery`、`New()` 引擎 |
+| `hb/boot` | 配置加载、Nacos 接入、依赖组装、`Serve/ServeWith`、健康检查、热更 |
+| `hb/db` | 多方言连接池(pg/mysql/sqlite)+ 序号迁移器(`hg_migrations` 记账) |
+| `hb/redis` | go-redis 客户端 |
+| `hb/s3` | minio 客户端(上传/下载/删除/预签名) |
+| `hb/nacos` | 配置中心 + 服务注册 |
+| `hb/ws` | WebSocket Hub(广播/定向/心跳) |
+| `hb/auth` | Redis 会话 + OAuth2 风格四端点 |
+| `hb/crypto` | AES-256-GCM、SHA256/HMAC、随机数 |
+| `hb/password` | argon2id/bcrypt/pbkdf2 哈希与校验 |
 
-包间依赖只有两个方向:所有子包 → `hg` 根包;`hg/boot` → 各子包(仅做组装)。
+包间依赖只有两个方向:所有子包 → `hb` 根包;`hb/boot` → 各子包(仅做组装)。
 `db/redis/s3/nacos/ws/password` 等叶子互不依赖;`auth → crypto`(令牌随机数)是
 唯一的叶子间依赖。
 
 ## 快速开始
 
-`go get` 本库(module `hg`)后,在**业务 module 根目录**直接写 `main.go`
+`go get` 本库(module `hb`)后,在**业务 module 根目录**直接写 `main.go`
 (与 `go.mod` 同级,不需要 `cmd/` 目录):
 
 ```
 yourapp/
-├── go.mod               // module yourapp;require hg
+├── go.mod               // module yourapp;require hb
 ├── main.go              // ← 与 go.mod 同级
 ├── migrations/
 │   └── 0001_init.sql    // 序号_描述.sql,经 go:embed 交给迁移器
@@ -58,8 +58,8 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/jackc/pgx/v5/stdlib" // 选定 pg:驱动由业务 import
 
-	"hg"
-	"hg/boot"
+	"hb"
+	"hb/boot"
 )
 
 //go:embed migrations/*.sql
@@ -78,17 +78,17 @@ func main() {
 // userRoutes 形状即 gin 社区的 register-function 惯例:
 // 在这里用闭包捕获 app,注册具体 handler。
 func userRoutes(app *boot.App, rg *gin.RouterGroup) {
-	rg.GET("/users/:id", hg.Wrap(func(c *gin.Context) (any, error) {
+	rg.GET("/users/:id", hb.Wrap(func(c *gin.Context) (any, error) {
 		var name string
 		err := app.DB.QueryRowContext(c, `SELECT name FROM t_user WHERE id = $1`,
 			c.Param("id")).Scan(&name)
 		if err != nil {
-			return nil, hg.Err(404, "user not found") // 业务错误:code 原样给调用方
+			return nil, hb.Err(404, "user not found") // 业务错误:code 原样给调用方
 		}
 		return gin.H{"id": c.Param("id"), "name": name}, nil
 	}))
 
-	rg.GET("/users", hg.Wrap(func(c *gin.Context) (any, error) {
+	rg.GET("/users", hb.Wrap(func(c *gin.Context) (any, error) {
 		rows, err := app.DB.QueryContext(c, `SELECT id, name FROM t_user`)
 		if err != nil {
 			return nil, err // 裸 error:Wrap 自动掩码为 500 internal error
@@ -103,7 +103,7 @@ func userRoutes(app *boot.App, rg *gin.RouterGroup) {
 			}
 			users = append(users, gin.H{"id": id, "name": name})
 		}
-		return hg.Page(users, uint64(len(users)), 1, 20), nil // 分页信封
+		return hb.Page(users, uint64(len(users)), 1, 20), nil // 分页信封
 	}))
 }
 
@@ -125,12 +125,12 @@ func pushTicker(app *boot.App) error {
 ```go
 // routes/user.go —— package routes
 var User boot.Mount = func(app *boot.App, rg *gin.RouterGroup) {
-	rg.GET("/users/:id", hg.Wrap(func(c *gin.Context) (any, error) {
+	rg.GET("/users/:id", hb.Wrap(func(c *gin.Context) (any, error) {
 		var name string
 		err := app.DB.QueryRowContext(c, `SELECT name FROM t_user WHERE id = $1`,
 			c.Param("id")).Scan(&name)
 		if err != nil {
-			return nil, hg.Err(404, "user not found")
+			return nil, hb.Err(404, "user not found")
 		}
 		return gin.H{"id": c.Param("id"), "name": name}, nil
 	}))
@@ -147,7 +147,7 @@ err := boot.Serve([]boot.Mount{routes.User, routes.Order},
 
 带鉴权的模块在各自 Mount 里挂 `auth.Guard(app.Sessions)` 子组;WebSocket 模块
 经 `boot.WithWS("/ws", handler)` 挂接,不占 Mount。若拆成多个 go.mod(独立仓库/
-共享库),用 `go.work` 把 hg 与业务模块放进同一 workspace 即可,代码不变。
+共享库),用 `go.work` 把 hb 与业务模块放进同一 workspace 即可,代码不变。
 
 配置(TOML,来自 Nacos 配置中心或内联文件)——配置段即开关:
 
@@ -169,19 +169,19 @@ url = "redis://127.0.0.1:6379"
 rate_limit = 100
 ```
 
-## 信封与错误(hg 包)
+## 信封与错误(hb 包)
 
 ```go
 // handler 惯用法:唯一出口 (any, error)
-e := hg.New() // 预装 404/405 框架信封的 gin 引擎(Recovery 需显式 e.Use)
-e.Use(hg.Recovery())
-e.GET("/hi", hg.Wrap(func(c *gin.Context) (any, error) {
+e := hb.New() // 预装 404/405 框架信封的 gin 引擎(Recovery 需显式 e.Use)
+e.Use(hb.Recovery())
+e.GET("/hi", hb.Wrap(func(c *gin.Context) (any, error) {
 	return gin.H{"hello": "world"}, nil        // → {"code":0,"message":"ok","data":{...}}
 }))
 
 // 业务错误:code/message 原样给调用方,HTTP 仍 200
-return nil, hg.Err(404, "user not found")
-return nil, hg.Errf(400, "bad page size %d", n)
+return nil, hb.Err(404, "user not found")
+return nil, hb.Errf(400, "bad page size %d", n)
 
 // 裸 error(db 驱动错等):Wrap 自动掩码 500 "internal error",原文 warn 进日志
 return nil, err
@@ -190,29 +190,29 @@ return nil, err
 c.Data(200, "text/plain", []byte("raw")); return nil, nil
 
 // 分页:JSON 形如 data:{"list":[...],"total":42,"page":2,"pageSize":20}
-return hg.Page(rows, total, page, pageSize), nil
+return hb.Page(rows, total, page, pageSize), nil
 
 // 中间件写框架级错误(Guard、401 等)
-hg.Write(c, http.StatusUnauthorized, hg.Envelope{Code: 401, Message: "unauthorized"})
+hb.Write(c, http.StatusUnauthorized, hb.Envelope{Code: 401, Message: "unauthorized"})
 c.Abort()
 ```
 
-错误是标准 `error`:`hg.Err` 返回 `error`,需要 code 时用 `errors.As` 取回
-`*hg.Error`(字段 `Code`/`Message`,`Unwrap()` 暴露掩码原文):
+错误是标准 `error`:`hb.Err` 返回 `error`,需要 code 时用 `errors.As` 取回
+`*hb.Error`(字段 `Code`/`Message`,`Unwrap()` 暴露掩码原文):
 
 ```go
-var e *hg.Error
+var e *hb.Error
 if errors.As(err, &e) && e.Code == 404 { ... }
 ```
 
 解析上游服务响应(客户端侧):
 
 ```go
-var r hg.Response[User]        // {"code":..,"message":..,"data":User}
+var r hb.Response[User]        // {"code":..,"message":..,"data":User}
 json.Unmarshal(body, &r)
 if r.Code != 0 { /* r.Data == nil */ }
 
-var p hg.PageData[User]        // 解析分页信封的 data
+var p hb.PageData[User]        // 解析分页信封的 data
 ```
 
 ## boot
@@ -259,10 +259,10 @@ Redis 双键会话(`{prefix}a:{token}` / `{prefix}r:{token}` 互存对端),acces
 check := func(req auth.LoginReq) (any, error) {
 	stored, err := getUser(req.Username)
 	if err != nil {
-		return nil, hg.Err(401, "invalid username or password")
+		return nil, hb.Err(401, "invalid username or password")
 	}
 	if !password.Verify(req.Password, stored.Hash) {
-		return nil, hg.Err(401, "invalid username or password")
+		return nil, hb.Err(401, "invalid username or password")
 	}
 	return sessionData{UID: stored.ID, Role: stored.Role}, nil
 }
@@ -330,7 +330,7 @@ url, _ = s.PresignPut("a/b.txt", 10*time.Minute, "text/plain")
 ## db
 
 连接池统一为 `database/sql` 的 `*sql.DB`;**选型由业务定死**:配置 `[db].driver`
-必填(pg | mysql | sqlite),驱动在业务 main.go 里 blank import,hg 不代引:
+必填(pg | mysql | sqlite),驱动在业务 main.go 里 blank import,hb 不代引:
 
 ```go
 import (
@@ -411,9 +411,9 @@ alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2
 
 功能对齐,API 按 Go 惯例重塑:
 
-1. `Result<T, HrError>` → `error`;`HrError` → `*hg.Error`(errors.As 可取回)。
+1. `Result<T, HrError>` → `error`;`HrError` → `*hb.Error`(errors.As 可取回)。
 2. 直写响应(`Hr::ok(c, ..)`)→ handler 返回 `(any, error)`,`Wrap` 统一出口。
-3. `merge_all` → 删除;`hg.New()` 返回预装 404/405 信封的 `*gin.Engine`。
+3. `merge_all` → 删除;`hb.New()` 返回预装 404/405 信封的 `*gin.Engine`。
 4. `*_secs` 整数配置 → `time.Duration`(TOML 写 `"5s"`/`"2h"`;整数按纳秒)。
 5. `database/sql` 统一池,三方言 pg/mysql/sqlite(`[db].driver` 必填,选型由业务
    定死、驱动业务 import;`hg_migrations` 记账表,格式与 sqlx 不兼容——记账独立,

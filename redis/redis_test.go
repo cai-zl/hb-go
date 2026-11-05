@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"hg"
-	"hg/redis"
+	"hb"
+	"hb/redis"
 )
 
 func msgOf(t *testing.T, err error) string {
 	t.Helper()
-	var e *hg.Error
+	var e *hb.Error
 	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hg.Error, got %v", err)
+		t.Fatalf("want *hb.Error, got %v", err)
 	}
 	return e.Message
 }

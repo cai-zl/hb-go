@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"hg/crypto"
+	"hb/crypto"
 )
 
 // ---- 摘要 ----

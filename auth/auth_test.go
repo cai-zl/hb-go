@@ -12,9 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"hg"
-	"hg/auth"
-	"hg/redis"
+	"hb"
+	"hb/auth"
+	"hb/redis"
 )
 
 type sessionData struct {
@@ -44,7 +44,7 @@ func newEngine(sessions *auth.Sessions) *gin.Engine {
 		if req.Username == "alice" && req.Password == "wonderland" {
 			return sessionData{UID: 7, Role: "admin", Extra: "x"}, nil
 		}
-		return nil, hg.Err(401, "invalid username or password")
+		return nil, hb.Err(401, "invalid username or password")
 	}
 	auth.Routes(sessions, check)(r.Group(""))
 	// 受保护组:Guard + From 取会话数据
@@ -52,20 +52,20 @@ func newEngine(sessions *auth.Sessions) *gin.Engine {
 	protected.GET("/who", func(c *gin.Context) {
 		data, err := auth.From[sessionData](c)
 		if err != nil {
-			var e *hg.Error
+			var e *hb.Error
 			if errors.As(err, &e) {
-				c.JSON(200, hg.Envelope{Code: e.Code, Message: e.Message})
+				c.JSON(200, hb.Envelope{Code: e.Code, Message: e.Message})
 			} else {
-				c.JSON(200, hg.Envelope{Code: 500, Message: "internal error"})
+				c.JSON(200, hb.Envelope{Code: 500, Message: "internal error"})
 			}
 			return
 		}
-		c.JSON(200, hg.Envelope{Code: 0, Message: "ok", Data: data})
+		c.JSON(200, hb.Envelope{Code: 0, Message: "ok", Data: data})
 	})
 	return r
 }
 
-func do(t *testing.T, r http.Handler, method, path, token string, body string) (*http.Response, hg.Envelope) {
+func do(t *testing.T, r http.Handler, method, path, token string, body string) (*http.Response, hb.Envelope) {
 	t.Helper()
 	var req *http.Request
 	if body == "" {
@@ -79,7 +79,7 @@ func do(t *testing.T, r http.Handler, method, path, token string, body string) (
 	}
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	var env hg.Envelope
+	var env hb.Envelope
 	_ = json.Unmarshal(w.Body.Bytes(), &env)
 	return w.Result(), env
 }
@@ -134,7 +134,7 @@ func TestBearerThreeStates(t *testing.T) {
 
 // ---- 集成部分(TEST_REDIS_URL 门控):登录/轮换/吊销全流程 ----
 
-func login(t *testing.T, r http.Handler, user, pass string) (auth.TokenResponse, int, hg.Envelope) {
+func login(t *testing.T, r http.Handler, user, pass string) (auth.TokenResponse, int, hb.Envelope) {
 	t.Helper()
 	body, _ := json.Marshal(auth.LoginReq{Username: user, Password: pass})
 	resp, env := do(t, r, "POST", "/auth/token", "", string(body))

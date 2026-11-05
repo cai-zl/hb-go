@@ -8,7 +8,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	// sqlite 驱动仅在测试里注册,不泄漏给 hg 的消费者
+	// sqlite 驱动仅在测试里注册,不泄漏给 hb 的消费者
 	_ "modernc.org/sqlite"
 )
 

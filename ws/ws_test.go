@@ -10,8 +10,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"hg"
-	"hg/ws"
+	"hb"
+	"hb/ws"
 )
 
 // echoServer: 收到文本回发信封 {code:0,message:"echo",data:<原文>};
@@ -27,7 +27,7 @@ func echoServer(t *testing.T, observe ...func(*ws.Conn)) (*ws.Hub, *httptest.Ser
 			if len(m.Data) == 0 { // pong(空载荷无法区分,用 ping 往返测)
 				return
 			}
-			c.Send(hg.Envelope{Message: "echo", Data: string(m.Data)})
+			c.Send(hb.Envelope{Message: "echo", Data: string(m.Data)})
 		}); err != nil {
 			t.Errorf("upgrade: %v", err)
 		}
@@ -48,14 +48,14 @@ func dial(t *testing.T, srv *httptest.Server, header http.Header) *websocket.Con
 	return c
 }
 
-func readEnv(t *testing.T, c *websocket.Conn) hg.Envelope {
+func readEnv(t *testing.T, c *websocket.Conn) hb.Envelope {
 	t.Helper()
 	_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
 	_, data, err := c.ReadMessage()
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	var env hg.Envelope
+	var env hb.Envelope
 	if err := json.Unmarshal(data, &env); err != nil {
 		t.Fatalf("unmarshal %q: %v", data, err)
 	}
@@ -65,7 +65,7 @@ func readEnv(t *testing.T, c *websocket.Conn) hg.Envelope {
 func TestUpgradeEchoAndMetadata(t *testing.T) {
 	connCh := make(chan *ws.Conn, 1)
 	hub, srv := echoServer(t, func(c *ws.Conn) { connCh <- c })
-	c := dial(t, srv, http.Header{"User-Agent": []string{"hg-test"}})
+	c := dial(t, srv, http.Header{"User-Agent": []string{"hb-test"}})
 
 	if err := c.WriteMessage(websocket.TextMessage, []byte("hi")); err != nil {
 		t.Fatal(err)
@@ -84,8 +84,8 @@ func TestUpgradeEchoAndMetadata(t *testing.T) {
 	if len(conn.ID) != 32 || !allHex(conn.ID) {
 		t.Fatalf("conn.ID = %q, want 32-char hex", conn.ID)
 	}
-	if conn.UserAgent != "hg-test" || conn.IP == nil {
-		t.Fatalf("conn metadata = %+v, want UA hg-test + IP", conn)
+	if conn.UserAgent != "hb-test" || conn.IP == nil {
+		t.Fatalf("conn metadata = %+v, want UA hb-test + IP", conn)
 	}
 }
 
@@ -126,7 +126,7 @@ func TestBroadcastAndSendTo(t *testing.T) {
 		t.Fatalf("count = %d, want 2", hub.Count())
 	}
 
-	hub.Broadcast(hg.Envelope{Data: "bcast"})
+	hub.Broadcast(hb.Envelope{Data: "bcast"})
 	env := readEnv(t, c1)
 	if env.Data != "bcast" {
 		t.Fatalf("c1 env = %+v", env)
@@ -136,14 +136,14 @@ func TestBroadcastAndSendTo(t *testing.T) {
 		t.Fatalf("c2 env = %+v", env)
 	}
 
-	if !hub.SendTo(id1, hg.Envelope{Message: "direct"}) {
+	if !hub.SendTo(id1, hb.Envelope{Message: "direct"}) {
 		t.Fatal("SendTo(id1) returned false")
 	}
 	env = readEnv(t, c1)
 	if env.Message != "direct" {
 		t.Fatalf("direct env = %+v", env)
 	}
-	if hub.SendTo("no-such-id", hg.Envelope{Data: "x"}) {
+	if hub.SendTo("no-such-id", hb.Envelope{Data: "x"}) {
 		t.Fatal(`SendTo("no-such-id") should be false`)
 	}
 	if !hub.SendRaw(id1, "raw-text") {
@@ -219,7 +219,7 @@ func TestPongForwardedToCallback(t *testing.T) {
 }
 
 func TestErrMsgNormalizesZeroCode(t *testing.T) {
-	var env hg.Envelope
+	var env hb.Envelope
 	if err := json.Unmarshal([]byte(ws.ErrMsg(0, "boom")), &env); err != nil {
 		t.Fatal(err)
 	}

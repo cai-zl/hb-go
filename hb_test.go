@@ -1,4 +1,4 @@
-package hg_test
+package hb_test
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"hg"
+	"hb"
 )
 
 func get(t *testing.T, h gin.HandlerFunc) (*httptest.ResponseRecorder, map[string]any) {
@@ -25,7 +25,7 @@ func get(t *testing.T, h gin.HandlerFunc) (*httptest.ResponseRecorder, map[strin
 }
 
 func TestWrapSuccessShape(t *testing.T) {
-	w, body := get(t, hg.Wrap(func(c *gin.Context) (any, error) {
+	w, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) {
 		return map[string]any{"a": 1}, nil
 	}))
 	if w.Code != 200 {
@@ -37,15 +37,15 @@ func TestWrapSuccessShape(t *testing.T) {
 }
 
 func TestWrapNilOmitsData(t *testing.T) {
-	_, body := get(t, hg.Wrap(func(c *gin.Context) (any, error) { return nil, nil }))
+	_, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) { return nil, nil }))
 	if _, ok := body["data"]; ok {
 		t.Fatalf("data should be omitted, got %v", body)
 	}
 }
 
 func TestWrapBizError(t *testing.T) {
-	_, body := get(t, hg.Wrap(func(c *gin.Context) (any, error) {
-		return nil, hg.Err(400, "no such user")
+	_, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) {
+		return nil, hb.Err(400, "no such user")
 	}))
 	if body["code"] != float64(400) || body["message"] != "no such user" {
 		t.Fatalf("body = %v", body)
@@ -56,14 +56,14 @@ func TestWrapBizError(t *testing.T) {
 }
 
 func TestErrZeroCodeIs500(t *testing.T) {
-	_, body := get(t, hg.Wrap(func(c *gin.Context) (any, error) { return nil, hg.Err(0, "boom") }))
+	_, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) { return nil, hb.Err(0, "boom") }))
 	if body["code"] != float64(500) || body["message"] != "boom" {
 		t.Fatalf("body = %v", body)
 	}
 }
 
 func TestWrapBareErrorMasked(t *testing.T) {
-	_, body := get(t, hg.Wrap(func(c *gin.Context) (any, error) {
+	_, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) {
 		return nil, errors.New("pg: connection refused")
 	}))
 	if body["code"] != float64(500) || body["message"] != "internal error" {
@@ -74,7 +74,7 @@ func TestWrapBareErrorMasked(t *testing.T) {
 func TestWrapSelfWritten(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
-	e.GET("/", hg.Wrap(func(c *gin.Context) (any, error) {
+	e.GET("/", hb.Wrap(func(c *gin.Context) (any, error) {
 		c.Data(200, "text/plain", []byte("raw"))
 		return nil, nil
 	}))
@@ -86,15 +86,15 @@ func TestWrapSelfWritten(t *testing.T) {
 }
 
 func TestErrf(t *testing.T) {
-	var err error = hg.Errf(500, "migration: bad file name %q", "x.sql")
+	var err error = hb.Errf(500, "migration: bad file name %q", "x.sql")
 	if err.Error() != "500 migration: bad file name \"x.sql\"" {
 		t.Fatalf("err = %q", err.Error())
 	}
 }
 
 func TestPageValue(t *testing.T) {
-	w, _ := get(t, hg.Wrap(func(c *gin.Context) (any, error) {
-		return hg.Page([]int{1, 2}, 42, 2, 20), nil
+	w, _ := get(t, hb.Wrap(func(c *gin.Context) (any, error) {
+		return hb.Page([]int{1, 2}, 42, 2, 20), nil
 	}))
 	if want := `{"code":0,"message":"ok","data":{"list":[1,2],"total":42,"page":2,"pageSize":20}}`; w.Body.String() != want {
 		t.Fatalf("body = %s, want %s", w.Body.String(), want)
@@ -103,7 +103,7 @@ func TestPageValue(t *testing.T) {
 
 func TestWrite(t *testing.T) {
 	w, body := get(t, func(c *gin.Context) {
-		hg.Write(c, 401, hg.Envelope{Code: 401, Message: "missing token"})
+		hb.Write(c, 401, hb.Envelope{Code: 401, Message: "missing token"})
 	})
 	if w.Code != 401 || body["code"] != float64(401) || body["message"] != "missing token" {
 		t.Fatalf("status = %d body = %v", w.Code, body)
@@ -111,7 +111,7 @@ func TestWrite(t *testing.T) {
 }
 
 func TestResponseParse(t *testing.T) {
-	var r hg.Response[string]
+	var r hb.Response[string]
 	in := `{"code":0,"message":"ok","data":"hi"}`
 	if err := json.Unmarshal([]byte(in), &r); err != nil {
 		t.Fatal(err)
@@ -119,14 +119,14 @@ func TestResponseParse(t *testing.T) {
 	if r.Code != 0 || r.Message != "ok" || *r.Data != "hi" {
 		t.Fatalf("r = %+v", r)
 	}
-	var bad hg.Response[string]
+	var bad hb.Response[string]
 	if err := json.Unmarshal([]byte(`{"code":404,"message":"nf"}`), &bad); err != nil || bad.Data != nil {
 		t.Fatalf("bad = %+v err = %v", bad, err)
 	}
 }
 
 func TestPageDataParse(t *testing.T) {
-	var p hg.PageData[string]
+	var p hb.PageData[string]
 	in := `{"list":["a"],"total":9,"page":1,"pageSize":10}`
 	if err := json.Unmarshal([]byte(in), &p); err != nil {
 		t.Fatal(err)
@@ -137,18 +137,18 @@ func TestPageDataParse(t *testing.T) {
 }
 
 func TestErrorAs(t *testing.T) {
-	err := hg.Err(401, "unauthorized")
+	err := hb.Err(401, "unauthorized")
 	if err.Error() != "401 unauthorized" {
 		t.Fatalf("err = %q", err.Error())
 	}
-	var e *hg.Error
+	var e *hb.Error
 	if !errors.As(err, &e) || e.Code != 401 || e.Message != "unauthorized" {
 		t.Fatalf("errors.As failed: %v", err)
 	}
-	if hg.Internal(nil) != nil {
+	if hb.Internal(nil) != nil {
 		t.Fatal("Internal(nil) should be nil")
 	}
-	masked := hg.Internal(errors.New("pg: refused"))
+	masked := hb.Internal(errors.New("pg: refused"))
 	if masked.Error() != "500 internal error: pg: refused" {
 		t.Fatalf("masked = %q", masked.Error())
 	}
@@ -159,8 +159,8 @@ func TestErrorAs(t *testing.T) {
 
 func TestFrameworkErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	e := hg.New()
-	e.GET("/hi", func(c *gin.Context) { c.JSON(200, hg.Envelope{Code: 0, Message: "ok"}) })
+	e := hb.New()
+	e.GET("/hi", func(c *gin.Context) { c.JSON(200, hb.Envelope{Code: 0, Message: "ok"}) })
 
 	w := httptest.NewRecorder()
 	e.ServeHTTP(w, httptest.NewRequest("GET", "/nope", nil))
@@ -187,7 +187,7 @@ func TestFrameworkErrors(t *testing.T) {
 func TestRecovery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
-	e.Use(hg.Recovery())
+	e.Use(hb.Recovery())
 	e.GET("/", func(c *gin.Context) { panic("explode") })
 	w := httptest.NewRecorder()
 	e.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))

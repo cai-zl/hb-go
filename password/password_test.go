@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"hg"
-	"hg/password"
+	"hb"
+	"hb/password"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -118,7 +118,7 @@ func TestVerifyNeverPanics(t *testing.T) {
 
 func TestUnknownAlgorithm(t *testing.T) {
 	_, err := password.HashWith("hunter2", "md5")
-	var e *hg.Error
+	var e *hb.Error
 	if err == nil || !errors.As(err, &e) || e.Code != 500 {
 		t.Fatalf("unknown alg: %v", err)
 	}

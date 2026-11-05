@@ -1,4 +1,4 @@
-module hg
+module hb
 
 go 1.27.3
 

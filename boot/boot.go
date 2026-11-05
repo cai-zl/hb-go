@@ -30,13 +30,13 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	goredis "github.com/redis/go-redis/v9"
 
-	"hg"
-	"hg/auth"
-	"hg/db"
-	"hg/nacos"
-	hgredis "hg/redis"
-	"hg/s3"
-	"hg/ws"
+	"hb"
+	"hb/auth"
+	"hb/db"
+	"hb/nacos"
+	hgredis "hb/redis"
+	"hb/s3"
+	"hb/ws"
 )
 
 // Mount 业务路由挂载:App 组装完成后、监听前调用——请求期经 app 取
@@ -101,7 +101,7 @@ func normalizeDurations(raw map[string]any) error {
 			}
 			d, err := time.ParseDuration(s)
 			if err != nil {
-				return hg.Errf(500, "config: %s.%s: invalid duration %q", section, k, s)
+				return hb.Errf(500, "config: %s.%s: invalid duration %q", section, k, s)
 			}
 			st[k] = int64(d)
 		}
@@ -125,14 +125,14 @@ type App struct {
 func ParseConfig(text string) (*Config, error) {
 	var raw map[string]any
 	if err := toml.Unmarshal([]byte(text), &raw); err != nil {
-		return nil, hg.Errf(500, "config: %v", err)
+		return nil, hb.Errf(500, "config: %v", err)
 	}
 	if err := normalizeDurations(raw); err != nil {
 		return nil, err
 	}
 	norm, err := toml.Marshal(raw)
 	if err != nil {
-		return nil, hg.Errf(500, "config: %v", err)
+		return nil, hb.Errf(500, "config: %v", err)
 	}
 	var rc struct {
 		Port        int             `toml:"port"`
@@ -148,13 +148,13 @@ func ParseConfig(text string) (*Config, error) {
 		Extra       map[string]any  `toml:"extra"`
 	}
 	if err := toml.Unmarshal(norm, &rc); err != nil {
-		return nil, hg.Errf(500, "config: %v", err)
+		return nil, hb.Errf(500, "config: %v", err)
 	}
 	if rc.Port == 0 {
-		return nil, hg.Err(500, "boot config: port is required")
+		return nil, hb.Err(500, "boot config: port is required")
 	}
 	if rc.Port < 0 || rc.Port > 65535 {
-		return nil, hg.Errf(500, "boot config: port out of range: %d", rc.Port)
+		return nil, hb.Errf(500, "boot config: port out of range: %d", rc.Port)
 	}
 	appName := rc.AppName
 	if appName == "" {
@@ -189,7 +189,7 @@ func ParseConfig(text string) (*Config, error) {
 // DefaultAppName 运行时二进制名(去路径),app_name 与 NACOS_DATA_ID 的缺省值。
 func DefaultAppName() string {
 	if len(os.Args) == 0 {
-		return "hg-app"
+		return "hb-app"
 	}
 	return filepath.Base(os.Args[0])
 }
@@ -347,7 +347,7 @@ func Serve(mounts []Mount, opts ...Option) error {
 		return err
 	}
 	if !found {
-		return hg.Errf(500, "nacos config not found: %s/%s", nc.DataID, nc.Group)
+		return hb.Errf(500, "nacos config not found: %s/%s", nc.DataID, nc.Group)
 	}
 	cfg, err := ParseConfig(text)
 	if err != nil {
@@ -383,7 +383,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	if advertise == "" {
 		ip, err := detectIP()
 		if err != nil {
-			return hg.Err(500, "cannot detect local ip; set advertise_ip in config")
+			return hb.Err(500, "cannot detect local ip; set advertise_ip in config")
 		}
 		advertise = ip
 	}
@@ -419,7 +419,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	}
 	if cfg.Auth != nil {
 		if app.Redis == nil {
-			return hg.Err(500, "boot config: [auth] requires a [redis] section")
+			return hb.Err(500, "boot config: [auth] requires a [redis] section")
 		}
 		app.Sessions = auth.NewSessions(app.Redis, *cfg.Auth)
 	}
@@ -436,8 +436,8 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 		}
 	}
 
-	// 路由:hg.New 预装 404/405 框架信封;业务挂载 + WS 端点 + 健康检查
-	e := hg.New()
+	// 路由:hb.New 预装 404/405 框架信封;业务挂载 + WS 端点 + 健康检查
+	e := hb.New()
 	for _, m := range b.mounts {
 		m(app, &e.RouterGroup)
 	}
@@ -448,7 +448,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 				onMessage(app, conn, msg)
 			}); err != nil {
 				if !c.Writer.Written() {
-					hg.Write(c, http.StatusOK, hg.Envelope{Code: 500, Message: "handshake failed"})
+					hb.Write(c, http.StatusOK, hb.Envelope{Code: 500, Message: "handshake failed"})
 				}
 			}
 		})
@@ -464,7 +464,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Host, cfg.Port))
 	if err != nil {
-		return hg.Errf(500, "bind %s:%d failed: %v", cfg.Host, cfg.Port, err)
+		return hb.Errf(500, "bind %s:%d failed: %v", cfg.Host, cfg.Port, err)
 	}
 	slog.Info("listening", "host", cfg.Host, "port", cfg.Port)
 
@@ -551,7 +551,7 @@ func initLogging(level string) func(string) {
 func detectIP() (string, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
-		return "", hg.Internal(err)
+		return "", hb.Internal(err)
 	}
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String(), nil

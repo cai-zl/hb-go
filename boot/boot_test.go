@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"hg"
-	"hg/auth"
-	"hg/boot"
+	"hb"
+	"hb/auth"
+	"hb/boot"
 )
 
 func mustParse(t *testing.T, text string) *boot.Config {
@@ -80,11 +80,11 @@ func TestParseConfigUnknownKeys(t *testing.T) {
 	}
 }
 
-func hgErr(t *testing.T, err error) *hg.Error {
+func hgErr(t *testing.T, err error) *hb.Error {
 	t.Helper()
-	var e *hg.Error
+	var e *hb.Error
 	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hg.Error, got %v", err)
+		t.Fatalf("want *hb.Error, got %v", err)
 	}
 	return e
 }
@@ -242,7 +242,7 @@ func TestServeStandaloneLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var env hg.Envelope
+	var env hb.Envelope
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 404 || json.Unmarshal(raw, &env) != nil || env.Code != 404 || env.Message != "Not Found" {
@@ -258,7 +258,7 @@ func TestServeStandaloneLifecycle(t *testing.T) {
 	if resp.StatusCode != 405 {
 		t.Fatalf("405 = %d %q", resp.StatusCode, raw)
 	}
-	var env405 hg.Envelope
+	var env405 hb.Envelope
 	if json.Unmarshal(raw, &env405) != nil || env405.Code != 405 {
 		t.Fatalf("405 body = %q", raw)
 	}
@@ -282,7 +282,7 @@ func TestServeStandaloneLifecycle(t *testing.T) {
 func TestHookFailurePreventsStart(t *testing.T) {
 	port := freePort(t)
 	cfg := mustParse(t, fmt.Sprintf("port = %d\nhost = \"127.0.0.1\"\nadvertise_ip = \"127.0.0.1\"\n", port))
-	boom := hg.Err(500, "hook boom")
+	boom := hb.Err(500, "hook boom")
 	err := boot.ServeWith(cfg, nil, boot.WithHook(func(app *boot.App) error { return boom }))
 	if hgErr(t, err).Message != "hook boom" {
 		t.Fatalf("err = %v", err)
