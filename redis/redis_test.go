@@ -41,10 +41,10 @@ func TestConnectPing(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer client.Close()
-	if err := client.Set(t.Context(), "hg_test", "ok", 0).Err(); err != nil {
+	if err := client.Set(t.Context(), "hb_test", "ok", 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	v, verr := client.Get(t.Context(), "hg_test").Result()
+	v, verr := client.Get(t.Context(), "hb_test").Result()
 	if verr != nil || v != "ok" {
 		t.Fatalf("get = %q (err %v), want ok", v, verr)
 	}

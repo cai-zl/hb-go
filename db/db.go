@@ -87,39 +87,39 @@ type dialect struct {
 
 var dialects = map[string]dialect{
 	"pg": {
-		create: `CREATE TABLE IF NOT EXISTS hg_migrations (
+		create: `CREATE TABLE IF NOT EXISTS hb_migrations (
 	id          BIGINT PRIMARY KEY,
 	name        TEXT NOT NULL,
 	checksum    BYTEA NOT NULL,
 	applied_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 	duration_ms BIGINT NOT NULL
 )`,
-		insert: `INSERT INTO hg_migrations (id, name, checksum, duration_ms) VALUES ($1, $2, $3, $4)`,
+		insert: `INSERT INTO hb_migrations (id, name, checksum, duration_ms) VALUES ($1, $2, $3, $4)`,
 	},
 	"mysql": {
-		create: `CREATE TABLE IF NOT EXISTS hg_migrations (
+		create: `CREATE TABLE IF NOT EXISTS hb_migrations (
 	id          BIGINT PRIMARY KEY,
 	name        VARCHAR(255) NOT NULL,
 	checksum    VARBINARY(32) NOT NULL,
 	applied_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	duration_ms BIGINT NOT NULL
 )`,
-		insert: `INSERT INTO hg_migrations (id, name, checksum, applied_at, duration_ms) VALUES (?, ?, ?, CURRENT_TIMESTAMP(6), ?)`,
+		insert: `INSERT INTO hb_migrations (id, name, checksum, applied_at, duration_ms) VALUES (?, ?, ?, CURRENT_TIMESTAMP(6), ?)`,
 	},
 	"sqlite": {
-		create: `CREATE TABLE IF NOT EXISTS hg_migrations (
+		create: `CREATE TABLE IF NOT EXISTS hb_migrations (
 	id          INTEGER PRIMARY KEY,
 	name        TEXT NOT NULL,
 	checksum    BLOB NOT NULL,
 	applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
 	duration_ms INTEGER NOT NULL
 )`,
-		insert: `INSERT INTO hg_migrations (id, name, checksum, applied_at, duration_ms) VALUES (?, ?, ?, datetime('now'), ?)`,
+		insert: `INSERT INTO hb_migrations (id, name, checksum, applied_at, duration_ms) VALUES (?, ?, ?, datetime('now'), ?)`,
 	},
 }
 
 // Migrate 应用 fsys 中文件名形如 "<序号>_<描述>.sql" 的迁移:只上行、幂等,
-// 按序号升序执行未应用者,一条迁移一条事务。记账表 hg_migrations 记录
+// 按序号升序执行未应用者,一条迁移一条事务。记账表 hb_migrations 记录
 // 序号、文件名、内容 sha256、应用时间与耗时。
 //
 // pg 经一次性专用连接执行:pgx 默认扩展协议一条 Exec 只能一条语句,
@@ -187,7 +187,7 @@ func Migrate(cfg Config, pool *sql.DB, fsys fs.FS) error {
 	sort.Slice(pending, func(i, j int) bool { return pending[i].id < pending[j].id })
 
 	applied := map[int64]bool{}
-	rows, err := exec.QueryContext(context.Background(), `SELECT id FROM hg_migrations`)
+	rows, err := exec.QueryContext(context.Background(), `SELECT id FROM hb_migrations`)
 	if err != nil {
 		return hb.Internal(err)
 	}

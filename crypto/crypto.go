@@ -1,5 +1,5 @@
 // Package crypto 提供摘要、HMAC 与 AES-GCM 加密,
-// 输出格式与 Rust 版 hr 的 crypto 模块逐字节兼容。
+// 输出格式与 Rust 版 hb 的 crypto 模块逐字节兼容。
 package crypto
 
 import (

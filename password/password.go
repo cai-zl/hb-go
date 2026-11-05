@@ -1,4 +1,4 @@
-// Package password 提供密码哈希与校验,输出格式与 Rust 版 hr 的 crypto
+// Package password 提供密码哈希与校验,输出格式与 Rust 版 hb 的 crypto
 // 模块逐字节兼容(存量哈希可直接校验、新哈希可被 Rust 校验)。
 package password
 
@@ -28,7 +28,7 @@ const (
 	AlgPBKDF2SHA256 HashAlg = "pbkdf2"
 )
 
-// 参数与 Rust 版 hr 一致,保证跨语言互通。
+// 参数与 Rust 版 hb 一致,保证跨语言互通。
 const (
 	argon2MemoryKiB  uint32 = 19456
 	argon2Time       uint32 = 2

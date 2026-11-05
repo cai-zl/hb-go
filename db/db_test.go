@@ -52,7 +52,7 @@ func TestMigrateIdempotent(t *testing.T) {
 		}
 	}
 	var n, sumLen int
-	if err := pool.QueryRow(`SELECT COUNT(*), LENGTH(checksum) FROM hg_migrations`).Scan(&n, &sumLen); err != nil {
+	if err := pool.QueryRow(`SELECT COUNT(*), LENGTH(checksum) FROM hb_migrations`).Scan(&n, &sumLen); err != nil {
 		t.Fatal(err)
 	}
 	if n != 2 || sumLen != 32 {
@@ -96,7 +96,7 @@ func TestMigrateFailureIsAtomic(t *testing.T) {
 		t.Fatalf("got %v, want migration failure", err)
 	}
 	var n int
-	if err := pool.QueryRow(`SELECT COUNT(*) FROM hg_migrations`).Scan(&n); err != nil || n != 1 {
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM hb_migrations`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("ledger rows=%d err=%v, want 1 (0001 committed, 0002 rolled back)", n, err)
 	}
 	var tables int
@@ -119,7 +119,7 @@ func TestMigratePg(t *testing.T) {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
 	files := fstest.MapFS{
-		"0001_demo.sql": &fstest.MapFile{Data: []byte("CREATE TABLE hg_demo (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now());\nINSERT INTO hg_demo DEFAULT VALUES;\n")},
+		"0001_demo.sql": &fstest.MapFile{Data: []byte("CREATE TABLE hb_demo (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now());\nINSERT INTO hb_demo DEFAULT VALUES;\n")},
 	}
 	cfg := Config{Driver: "pg", URL: url}
 	// pg 迁移走库内专用连接,pool 参数不参与执行
@@ -134,14 +134,14 @@ func TestMigratePg(t *testing.T) {
 	}
 	defer pool.Close()
 	var n int
-	if err := pool.QueryRow(`SELECT COUNT(*) FROM hg_migrations`).Scan(&n); err != nil || n != 2 {
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM hb_migrations`).Scan(&n); err != nil || n != 2 {
 		t.Fatalf("ledger rows=%d err=%v, want 2", n, err)
 	}
 	var demo int
-	if err := pool.QueryRow(`SELECT COUNT(*) FROM hg_demo`).Scan(&demo); err != nil || demo != 1 {
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM hb_demo`).Scan(&demo); err != nil || demo != 1 {
 		t.Fatalf("seed rows=%d err=%v, want 1", demo, err)
 	}
-	for _, ddl := range []string{`DROP TABLE IF EXISTS hg_demo`, `DROP TABLE IF EXISTS hg_migrations`} {
+	for _, ddl := range []string{`DROP TABLE IF EXISTS hb_demo`, `DROP TABLE IF EXISTS hb_migrations`} {
 		if _, err := pool.Exec(ddl); err != nil {
 			t.Fatalf("cleanup %q: %v", ddl, err)
 		}

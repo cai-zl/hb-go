@@ -14,7 +14,7 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// ---- 密码哈希:Rust hr 侧生成的参考向量(跨语言兼容) ----
+// ---- 密码哈希:Rust hb 侧生成的参考向量(跨语言兼容) ----
 
 var rustVectors = map[string]string{
 	"argon2id": "$argon2id$v=19$m=19456,t=2,p=1$AQIDBAUGBwgJCgsMDQ4PEA$XjJz8yJ75yKOuio9hmmWUSoO4c2Ktym5oVhKj7zY6NY",

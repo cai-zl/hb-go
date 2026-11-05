@@ -34,7 +34,7 @@ import (
 	"hb/auth"
 	"hb/db"
 	"hb/nacos"
-	hgredis "hb/redis"
+	hbredis "hb/redis"
 	"hb/s3"
 	"hb/ws"
 )
@@ -59,7 +59,7 @@ type Config struct {
 	Unknown     []string
 
 	Db    *db.Config      `toml:"db"`    // [db] 段,写了才连
-	Redis *hgredis.Config `toml:"redis"` // [redis] 段,写了才连
+	Redis *hbredis.Config `toml:"redis"` // [redis] 段,写了才连
 	S3    *s3.Config      `toml:"s3"`    // [s3] 段,写了才连(启动即校验桶)
 	Auth  *auth.Config    `toml:"auth"`  // [auth] 段,依赖 [redis]
 
@@ -142,7 +142,7 @@ func ParseConfig(text string) (*Config, error) {
 		LogLevel    string          `toml:"log_level"`
 		AdvertiseIP string          `toml:"advertise_ip"`
 		Db          *db.Config      `toml:"db"`
-		Redis       *hgredis.Config `toml:"redis"`
+		Redis       *hbredis.Config `toml:"redis"`
 		S3          *s3.Config      `toml:"s3"`
 		Auth        *auth.Config    `toml:"auth"`
 		Extra       map[string]any  `toml:"extra"`
@@ -404,7 +404,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 		}
 	}
 	if cfg.Redis != nil {
-		client, err := hgredis.Connect(*cfg.Redis)
+		client, err := hbredis.Connect(*cfg.Redis)
 		if err != nil {
 			return err
 		}

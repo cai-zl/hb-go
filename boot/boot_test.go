@@ -80,7 +80,7 @@ func TestParseConfigUnknownKeys(t *testing.T) {
 	}
 }
 
-func hgErr(t *testing.T, err error) *hb.Error {
+func hbErr(t *testing.T, err error) *hb.Error {
 	t.Helper()
 	var e *hb.Error
 	if err == nil || !errors.As(err, &e) {
@@ -91,18 +91,18 @@ func hgErr(t *testing.T, err error) *hb.Error {
 
 func TestParseConfigRequiresPort(t *testing.T) {
 	_, err := boot.ParseConfig("app_name = \"x\"")
-	if hgErr(t, err).Message != "boot config: port is required" {
+	if hbErr(t, err).Message != "boot config: port is required" {
 		t.Fatalf("err = %v", err)
 	}
 	_, err = boot.ParseConfig("port = 99999")
-	if hgErr(t, err).Message != "boot config: port out of range: 99999" {
+	if hbErr(t, err).Message != "boot config: port out of range: 99999" {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestParseConfigBadTOML(t *testing.T) {
 	_, err := boot.ParseConfig("port =")
-	msg := hgErr(t, err).Message
+	msg := hbErr(t, err).Message
 	if len(msg) < 8 || msg[:8] != "config: " {
 		t.Fatalf("err = %v, want config: prefix", err)
 	}
@@ -284,7 +284,7 @@ func TestHookFailurePreventsStart(t *testing.T) {
 	cfg := mustParse(t, fmt.Sprintf("port = %d\nhost = \"127.0.0.1\"\nadvertise_ip = \"127.0.0.1\"\n", port))
 	boom := hb.Err(500, "hook boom")
 	err := boot.ServeWith(cfg, nil, boot.WithHook(func(app *boot.App) error { return boom }))
-	if hgErr(t, err).Message != "hook boom" {
+	if hbErr(t, err).Message != "hook boom" {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -294,7 +294,7 @@ func TestAuthRequiresRedis(t *testing.T) {
 	port := freePort(t)
 	cfg := mustParse(t, fmt.Sprintf("port = %d\nhost = \"127.0.0.1\"\nadvertise_ip = \"127.0.0.1\"\n[auth]\n", port))
 	err := boot.ServeWith(cfg, nil, boot.WithLogging(false))
-	if hgErr(t, err).Message != "boot config: [auth] requires a [redis] section" {
+	if hbErr(t, err).Message != "boot config: [auth] requires a [redis] section" {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -303,7 +303,7 @@ func TestAuthRequiresRedis(t *testing.T) {
 func TestServeRequiresNacosEnv(t *testing.T) {
 	t.Setenv("NACOS_SERVER_ADDR", "")
 	err := boot.Serve(nil)
-	if hgErr(t, err).Message != "missing env: NACOS_SERVER_ADDR" {
+	if hbErr(t, err).Message != "missing env: NACOS_SERVER_ADDR" {
 		t.Fatalf("err = %v", err)
 	}
 	_ = os.Unsetenv("NACOS_SERVER_ADDR")

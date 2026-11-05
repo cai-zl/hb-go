@@ -17,7 +17,7 @@ HTTP 响应**永远 200**(错误只体现在 `code`);仅框架级错误(404/405�
 | --- | --- |
 | `hb` | 信封、`Wrap((any, error))`、`Err/Errf/Internal`、`Page`、`Recovery`、`New()` 引擎 |
 | `hb/boot` | 配置加载、Nacos 接入、依赖组装、`Serve/ServeWith`、健康检查、热更 |
-| `hb/db` | 多方言连接池(pg/mysql/sqlite)+ 序号迁移器(`hg_migrations` 记账) |
+| `hb/db` | 多方言连接池(pg/mysql/sqlite)+ 序号迁移器(`hb_migrations` 记账) |
 | `hb/redis` | go-redis 客户端 |
 | `hb/s3` | minio 客户端(上传/下载/删除/预签名) |
 | `hb/nacos` | 配置中心 + 服务注册 |
@@ -288,7 +288,7 @@ token 缺失/失效 → HTTP 401 + 信封;凭据错 → HTTP 200 + 业务码 401
 auth.NewSessions(redisClient, auth.Config{
 	TokenTTL:   2 * time.Hour,       // toml: token_ttl = "2h"
 	RefreshTTL: 30 * 24 * time.Hour, // toml: refresh_ttl = "720h"
-	Prefix:     "hg:auth:",          // Redis 键前缀
+	Prefix:     "hb:auth:",          // Redis 键前缀
 })
 // Sessions.Create/Get/Refresh/Revoke/Touch,AccessTTL()/RefreshTTL() time.Duration
 ```
@@ -348,7 +348,7 @@ err = db.Migrate(dbCfg, pool, migrationsFS) // 业务仓库 //go:embed migration
 | `sqlite` | `modernc.org/sqlite`(纯 Go 免 CGO) | 文件路径 `app.db` 或 `:memory:` |
 
 - 迁移文件名 `序号_描述.sql`:只上行、幂等、一条迁移一条事务,记账表
-  `hg_migrations`(name、checksum、applied_at、duration_ms)。
+  `hb_migrations`(name、checksum、applied_at、duration_ms)。
 - 迁移 SQL **直接用所选方言书写**,库原样执行、不做翻译:pg 走一次性专用连接
   (多语句文件可用,不拖累业务池);mysql 必须 DSN 带 `multiStatements=true`
   (库只校验提示,不代改 DSN);sqlite 同样支持多语句文件。
@@ -394,7 +394,7 @@ ok := password.Verify("hunter2", h)           // 前缀分派;垃圾输入一律
 alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2-sha256"
 ```
 
-三算法互相兼容(可与 Rust hr 生成的哈希互通,已双向验证)。
+三算法互相兼容(可与 Rust hb 生成的哈希互通,已双向验证)。
 
 ## 测试
 
@@ -407,17 +407,17 @@ alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2
 | `TEST_S3_ENDPOINT`(含 BUCKET/ACCESS_KEY/SECRET_KEY) | 上传下载/404/预签名 |
 | `TEST_NACOS_ADDR` | 注册/反注册/配置读取 |
 
-## 与 Rust hr 的差异
+## 与 Rust hb 的差异
 
 功能对齐,API 按 Go 惯例重塑:
 
-1. `Result<T, HrError>` → `error`;`HrError` → `*hb.Error`(errors.As 可取回)。
-2. 直写响应(`Hr::ok(c, ..)`)→ handler 返回 `(any, error)`,`Wrap` 统一出口。
+1. `Result<T, HbError>` → `error`;`HbError` → `*hb.Error`(errors.As 可取回)。
+2. 直写响应(`Hb::ok(c, ..)`)→ handler 返回 `(any, error)`,`Wrap` 统一出口。
 3. `merge_all` → 删除;`hb.New()` 返回预装 404/405 信封的 `*gin.Engine`。
 4. `*_secs` 整数配置 → `time.Duration`(TOML 写 `"5s"`/`"2h"`;整数按纳秒)。
 5. `database/sql` 统一池,三方言 pg/mysql/sqlite(`[db].driver` 必填,选型由业务
-   定死、驱动业务 import;`hg_migrations` 记账表,格式与 sqlx 不兼容——记账独立,
+   定死、驱动业务 import;`hb_migrations` 记账表,格式与 sqlx 不兼容——记账独立,
    已应用的 SQL 内容仍以 checksum 比对)。
-6. 密码哈希默认 argon2id(与 hr 相同参数),`$pbkdf2$600000$..` 格式互通。
+6. 密码哈希默认 argon2id(与 hb 相同参数),`$pbkdf2$600000$..` 格式互通。
 7. 示例以 README 承载(本页),不维护 examples/ 目录;业务服务 `main.go`
    与 `go.mod` 同级。

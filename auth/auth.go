@@ -30,7 +30,7 @@ type Config struct {
 const (
 	defaultTokenTTL   = 2 * time.Hour
 	defaultRefreshTTL = 30 * 24 * time.Hour
-	defaultPrefix     = "hg:auth:"
+	defaultPrefix     = "hb:auth:"
 )
 
 // TokenPair 一对新旧会话令牌。
@@ -260,7 +260,7 @@ func unauthorized(c *gin.Context, msg string) {
 }
 
 // Guard 整组路由保护中间件:校验通过后把会话记录注入 gin context
-// (key "hg.session"),handler 内用 auth.From[T] 取会话数据。
+// (key "hb.session"),handler 内用 auth.From[T] 取会话数据。
 func Guard(sessions *Sessions) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := bearer(c.Request.Header.Get("Authorization"))
@@ -283,15 +283,15 @@ func Guard(sessions *Sessions) gin.HandlerFunc {
 			unauthorized(c, "unauthorized")
 			return
 		}
-		c.Set("hg.session", rec)
-		c.Set("hg.token", token)
+		c.Set("hb.session", rec)
+		c.Set("hb.token", token)
 		c.Next()
 	}
 }
 
 const (
-	ctxKeySession = "hg.session"
-	ctxKeyToken   = "hg.token"
+	ctxKeySession = "hb.session"
+	ctxKeyToken   = "hb.token"
 )
 
 // From 取当前请求的会话数据(T 为登录时写入的类型);须配合 Guard 使用。
