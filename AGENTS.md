@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`github.com/cai-zl/hb-go` is a Go **library** (no `main` package, no binary): a unified HTTP response envelope for gin plus a one-call service starter, `boot.Serve`. Business handlers return `(any, error)`; the framework turns every outcome into `{"code":…,"message":…,"data":…}`. It is the Go counterpart of a Rust library named hb, and its `crypto` and `password` formats are byte-compatible with that version.
+`github.com/cai-zl/hb-go` is a Go **library** (no `main` package, no binary): an HTTP response envelope for Gin plus a one-call service starter, `boot.Serve`. Business routes use native Gin handlers and apply the consuming project's response and error policy. It is the Go counterpart of a Rust library named hb, and its `crypto` and `password` formats are byte-compatible with that version.
 
 - The module root is package `hb` (directory `hb-go` ≠ package name). Import `"github.com/cai-zl/hb-go"` and reference `hb.`.
 - `README.md` (Chinese) is the only documentation. There are no scripts, Makefile, CI, linter config or `examples/`.
@@ -17,12 +17,12 @@ crypto, db, nacos, password, redis, s3, ws ──► hb   leaf packages; never i
 
 Keep this direction. Dependencies are passed as concrete types; `auth.AuthChecker` is the business login extension point, and `boot` is the only assembler.
 
-**Request.** `rg.GET("/x", hb.Wrap(func(c *gin.Context) (any, error) { … }))`:
+**Request.** Register a native handler: `rg.GET("/x", func(c *gin.Context) { … })`.
 
-- `(data, nil)` → HTTP 200 `{"code":0,"message":"ok","data":…}` (`data` is omitted when nil).
-- `*hb.Error` → HTTP 200 with its `code` and `message`.
-- Any other error → HTTP 200 `{"code":500,"message":"internal error"}`; the cause is logged with `slog.Warn`.
-- Real status codes are reserved for framework-level failures (`hb.Write` + `c.Abort()`): 404/405 from `hb.New()`, 401 from `auth.Guard` and `/auth/me`, 503 from `/readyz`.
+- Reuse the project's shared HTTP response and error handling; only define it in the project if none exists. `hb.Write` writes an `hb.Envelope` at the caller's HTTP status.
+- When retaining the old business protocol, success and business failures use HTTP 200 with the result in `code`; omit `data` when nil.
+- Mask unknown errors with `hb.Internal`, and expose only the recognized `*hb.Error` code and message, not the underlying cause.
+- Built-in endpoints retain their own statuses: 404/405 from `hb.New()`, 401 from `auth.Guard` and `/auth/me`, and 503 from `/readyz`.
 
 **Startup** (`Boot.run` in `boot/boot.go`). `Serve(mounts, opts...)` reads the `NACOS_*` env, pulls the TOML config from Nacos, then runs with registration and hot reload. `ServeWith(cfg, mounts, opts...)` takes an explicit `Config` and runs standalone unless `WithNacos` is given. Order: validate `WithAuth` has `[auth]` → logging → connect configured sections (`[db]`, migrations if `WithMigrator`, `[redis]`, `[s3]`, `[auth]`) → hooks in order (first error aborts before listening) → routes (`hb.New()`, auth endpoints if enabled, business mounts, WS endpoints, `/healthz`, `/readyz`) → listen → register → config listener → SIGINT/SIGTERM → `http.Server.Shutdown` → deregister.
 
@@ -36,7 +36,7 @@ Keep this direction. Dependencies are passed as concrete types; `auth.AuthChecke
 
 | Path | Package | Responsibility |
 |---|---|---|
-| `hb.go` | `hb` | `Envelope`, `Wrap`, `Err`/`Errf`/`Internal`, `Write`, `Page`, `New`, `Recovery`, `Response[T]`, `PageData[T]` |
+| `hb.go` | `hb` | `Envelope`, `Err`/`Errf`/`Internal`, `Write`, `Page`, `New`, `Recovery`, `Response[T]`, `PageData[T]` |
 | `boot/` | `boot` | `Serve`/`ServeWith`, options, `Config`/`ParseConfig`, `App`, `Mount`, `Hook`, `Snapshot[T]` |
 | `auth/` | `auth` | `AuthChecker`, fixed auth endpoints, Redis-backed sessions, `Guard`, `From[T]`, `Token` |
 | `db/` | `db` | `*sql.DB` pool for `pg`/`mysql`/`sqlite`, up-only file migrations |
@@ -68,7 +68,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 ### Errors and responses (`hb.go` is the contract)
 
-- Handlers have one exit, always behind `hb.Wrap`: `return data, nil` or `return nil, err`. To write a raw response: `c.Data(…)`, then `return nil, nil` (`Wrap` never overwrites a written response).
+- Business handlers own queries, validation and authorization. Use the project's shared response and error handling; for custom responses, use Gin (e.g. `c.Data(…)`) and return after writing.
 - Caller-visible errors: `hb.Err(code, msg)` / `hb.Errf(code, fmt, args...)`; code `0` is normalized to `500`. Infrastructure failures: `hb.Internal(err)`, which masks the message, keeps the cause for `errors.As`/`Unwrap` and logs it.
 - Return `error`, never `*hb.Error` (typed-nil pitfall; see the comment on `crypto.gcmFor`).
 - Config problems: `hb.Err(500, "<pkg> config: … is required")`; TOML parse errors are prefixed `config: `.
@@ -125,7 +125,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 ## Important Files
 
-- `hb.go`: envelope and `Wrap`; every handler depends on it.
+- `hb.go`: response envelope, pagination, error helpers and Gin engine setup.
 - `boot/boot.go`: `Serve`/`ServeWith`, `Boot.run` startup order, `WithAuth`, `ParseConfig`, `knownKeys`/`durationKeys`, `Snapshot`.
 - `auth/routes.go`: fixed auth endpoints and their error responses; boot mounts them using the module-internal marker.
 - `auth/auth.go`: `AuthChecker`, session record layout, `Guard`, `From[T]`, `Token`.
@@ -136,9 +136,8 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 ### README examples that do not match the code
 
-- Examples write `import "hb"`; the real path is `github.com/cai-zl/hb-go`.
 - The quick start passes the `//go:embed migrations/*.sql` FS straight to `WithMigrator`. `db.Migrate` lists the FS root and silently applies nothing; pass `fs.Sub(migrations, "migrations")` instead.
-- The `ws` example uses `msg.Kind` and `ws.Text`/`ws.Binary`/`ws.Pong`, which do not exist. The `auth` protected-route example lacks `hb.Wrap`. The TOML sample repeats `[db]` and omits the required `url`. `password.Algorithm` returns `"pbkdf2"`, not `"pbkdf2-sha256"`.
+- The TOML sample repeats `[db]` and omits the required `url`. `password.Algorithm` returns `"pbkdf2"`, not `"pbkdf2-sha256"`.
 
 ## Runtime/Tooling Preferences
 
@@ -151,7 +150,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 - **Layout**: tests use an external `<pkg>_test` package by default. Internal tests include `boot/boot_internal_test.go` (`resolveLevel`) and `db/db_test.go` (registers the sqlite driver for tests only).
 - **Style**: no `t.Run`, `t.Parallel` or `testing.Short`; no mocks, interfaces or `testdata/`. Fixtures are inline: TOML string literals, `fstest.MapFS` migrations, Rust vectors, `httptest.NewRecorder` / `httptest.NewServer`, sqlite `:memory:` via `sqlitePool`.
-- **Names**: `Test<Unit><Behaviour>` without underscores (`TestWrapNilOmitsData`, `TestMigrateFailureIsAtomic`); one end-to-end test per area (`TestAuthFlow`, `TestServeStandaloneLifecycle`).
+- **Names**: `Test<Unit><Behaviour>` without underscores (`TestErrZeroCodeIs500`, `TestMigrateFailureIsAtomic`); one end-to-end test per area (`TestAuthFlow`, `TestServeStandaloneLifecycle`).
 - **Assertions**: table cases as a plain loop with the case name folded into the message; `t.Fatalf("x = %v, want …")` for failures; errors checked with `errors.As` to `*hb.Error`, then `e.Message` / `e.Code`; JSON decoded to `map[string]any` (numbers are `float64`).
 - **Helpers**: unexported, first line `t.Helper()`, duplicated per package rather than shared (`get`, `mustParse`, `hbErr`, `msgOf`, `codeOf`, `do`, `freePort`, `waitFor`, `sqlitePool`). Use `t.Setenv`, `t.Cleanup` and `gin.SetMode(gin.TestMode)`. Reference tests to copy: `redis/redis_test.go` (unit), `db/db_test.go` (FS + DB), `ws/ws_test.go` (hub).
 - **Integration tests** start with the env lookup and `t.Skip`, then connect. They touch real services, so point them at throwaway instances:
