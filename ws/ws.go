@@ -42,17 +42,17 @@ type Conn struct {
 	closeOnce sync.Once
 }
 
-// Send 定向回发一条信封消息;序列化失败仅 warn 跳过,返回是否入队。
-func (c *Conn) Send(env any) bool {
-	data, err := json.Marshal(env)
+// Send 将 msg 编码为 JSON 文本回发，不添加信封。返回值只表示是否入队，不保证送达。
+func (c *Conn) Send(msg any) bool {
+	data, err := json.Marshal(msg)
 	if err != nil {
 		slog.Warn("ws send serialize failed; skipped", "conn", c.ID, "err", err)
 		return false
 	}
-	return c.sendRaw(data)
+	return c.enqueue(data)
 }
 
-func (c *Conn) sendRaw(data []byte) bool {
+func (c *Conn) enqueue(data []byte) bool {
 	select {
 	case <-c.done:
 		return false
@@ -107,36 +107,13 @@ func (h *Hub) Conn(id string) *Conn {
 	return h.conns[id]
 }
 
-// OKMsg 把任意值序列化为信封文本消息。
-func OKMsg(env any) (string, error) {
-	data, err := json.Marshal(env)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-// ErrMsg 构造错误信封文本消息;code=0 归一为 500。
-func ErrMsg(code int, msg string) string {
-	if code == 0 {
-		code = 500
-	}
-	data, _ := json.Marshal(hb.Envelope{Code: code, Message: msg})
-	return string(data)
-}
-
-// Broadcast 给所有连接广播一条信封消息;序列化失败仅 warn 跳过。
-func (h *Hub) Broadcast(env any) {
-	msg, err := OKMsg(env)
+// Broadcast 将 msg 编码为 JSON 文本广播，不添加信封。编码失败仅记录告警并跳过。
+func (h *Hub) Broadcast(msg any) {
+	data, err := json.Marshal(msg)
 	if err != nil {
 		slog.Warn("broadcast serialize failed; skipped", "err", err)
 		return
 	}
-	h.BroadcastRaw(msg)
-}
-
-// BroadcastRaw 广播一条裸消息(不套信封,对接非信封客户端时用);死连接顺手剔除。
-func (h *Hub) BroadcastRaw(msg string) {
 	h.mu.RLock()
 	conns := make([]*Conn, 0, len(h.conns))
 	for _, c := range h.conns {
@@ -144,37 +121,24 @@ func (h *Hub) BroadcastRaw(msg string) {
 	}
 	h.mu.RUnlock()
 	for _, c := range conns {
-		if !c.sendRaw([]byte(msg)) {
+		if !c.enqueue(data) {
 			h.remove(c.ID)
 		}
 	}
 }
 
-// SendTo 定向发送信封消息;连接不存在或已死返回 false(死连接顺手剔除)。
-func (h *Hub) SendTo(id string, env any) bool {
+// SendTo 将 msg 编码为 JSON 文本发往 id，不添加信封。返回值只表示是否入队，不保证送达。
+func (h *Hub) SendTo(id string, msg any) bool {
 	c := h.Conn(id)
 	if c == nil {
 		return false
 	}
-	data, err := json.Marshal(env)
+	data, err := json.Marshal(msg)
 	if err != nil {
 		slog.Warn("ws send serialize failed; skipped", "conn", id, "err", err)
 		return false
 	}
-	if !c.sendRaw(data) {
-		h.remove(id)
-		return false
-	}
-	return true
-}
-
-// SendRaw 定向发送裸消息;语义同 SendTo。
-func (h *Hub) SendRaw(id string, msg string) bool {
-	c := h.Conn(id)
-	if c == nil {
-		return false
-	}
-	if !c.sendRaw([]byte(msg)) {
+	if !c.enqueue(data) {
 		h.remove(id)
 		return false
 	}

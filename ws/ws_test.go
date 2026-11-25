@@ -10,12 +10,10 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/ws"
 )
 
-// echoServer: 收到文本回发信封 {code:0,message:"echo",data:<原文>};
-// 收到 Pong 时回发 {code:0,message:"pong"}。
+// echoServer 回发包含原载荷的不带信封的 JSON，跳过空载荷。
 func echoServer(t *testing.T, observe ...func(*ws.Conn)) (*ws.Hub, *httptest.Server) {
 	t.Helper()
 	hub := ws.NewHub()
@@ -27,7 +25,7 @@ func echoServer(t *testing.T, observe ...func(*ws.Conn)) (*ws.Hub, *httptest.Ser
 			if len(m.Data) == 0 { // pong(空载荷无法区分,用 ping 往返测)
 				return
 			}
-			c.Send(hb.Envelope{Message: "echo", Data: string(m.Data)})
+			c.Send(map[string]string{"echo": string(m.Data)})
 		}); err != nil {
 			t.Errorf("upgrade: %v", err)
 		}
@@ -48,18 +46,17 @@ func dial(t *testing.T, srv *httptest.Server, header http.Header) *websocket.Con
 	return c
 }
 
-func readEnv(t *testing.T, c *websocket.Conn) hb.Envelope {
+func readText(t *testing.T, c *websocket.Conn) string {
 	t.Helper()
 	_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
-	_, data, err := c.ReadMessage()
+	kind, data, err := c.ReadMessage()
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	var env hb.Envelope
-	if err := json.Unmarshal(data, &env); err != nil {
-		t.Fatalf("unmarshal %q: %v", data, err)
+	if kind != websocket.TextMessage {
+		t.Fatalf("read frame type = %d, want TextMessage (%d)", kind, websocket.TextMessage)
 	}
-	return env
+	return string(data)
 }
 
 func TestUpgradeEchoAndMetadata(t *testing.T) {
@@ -70,9 +67,8 @@ func TestUpgradeEchoAndMetadata(t *testing.T) {
 	if err := c.WriteMessage(websocket.TextMessage, []byte("hi")); err != nil {
 		t.Fatal(err)
 	}
-	env := readEnv(t, c)
-	if env.Code != 0 || env.Message != "echo" || env.Data != "hi" {
-		t.Fatalf("env = %+v, want code 0 echo hi", env)
+	if got := readText(t, c); got != `{"echo":"hi"}` {
+		t.Fatalf("echo of hi = %q, want %s", got, `{"echo":"hi"}`)
 	}
 	if hub.Count() != 1 {
 		t.Fatalf("count = %d, want 1", hub.Count())
@@ -126,33 +122,40 @@ func TestBroadcastAndSendTo(t *testing.T) {
 		t.Fatalf("count = %d, want 2", hub.Count())
 	}
 
-	hub.Broadcast(hb.Envelope{Data: "bcast"})
-	env := readEnv(t, c1)
-	if env.Data != "bcast" {
-		t.Fatalf("c1 env = %+v", env)
+	hub.Broadcast(map[string]int{"n": 1})
+	if got := readText(t, c1); got != `{"n":1}` {
+		t.Fatalf("c1 after Broadcast(map[n:1]) = %q, want %s", got, `{"n":1}`)
 	}
-	env = readEnv(t, c2)
-	if env.Data != "bcast" {
-		t.Fatalf("c2 env = %+v", env)
+	if got := readText(t, c2); got != `{"n":1}` {
+		t.Fatalf("c2 after Broadcast(map[n:1]) = %q, want %s", got, `{"n":1}`)
 	}
 
-	if !hub.SendTo(id1, hb.Envelope{Message: "direct"}) {
-		t.Fatal("SendTo(id1) returned false")
+	if hub.SendTo(id1, make(chan int)) {
+		t.Fatal("SendTo(id1, chan int) = true, want false")
 	}
-	env = readEnv(t, c1)
-	if env.Message != "direct" {
-		t.Fatalf("direct env = %+v", env)
+	if !hub.SendTo(id1, "hi") {
+		t.Fatal(`SendTo(id1, "hi") = false, want true`)
 	}
-	if hub.SendTo("no-such-id", hb.Envelope{Data: "x"}) {
-		t.Fatal(`SendTo("no-such-id") should be false`)
+	if got := readText(t, c1); got != `"hi"` {
+		t.Fatalf(`c1 after SendTo(id1, "hi") = %q, want %s`, got, `"hi"`)
 	}
-	if !hub.SendRaw(id1, "raw-text") {
-		t.Fatal("SendRaw(id1) returned false")
+	if hub.SendTo("no-such-id", "x") {
+		t.Fatal(`SendTo("no-such-id", "x") = true, want false`)
 	}
-	_ = c1.SetReadDeadline(time.Now().Add(3 * time.Second))
-	_, data, err := c1.ReadMessage()
-	if err != nil || string(data) != "raw-text" {
-		t.Fatalf("raw = %q (err %v), want raw-text", data, err)
+	const direct = `{"direct":true}`
+	if !hub.SendTo(id1, json.RawMessage(direct)) {
+		t.Fatalf("SendTo(id1, json.RawMessage(%s)) = false, want true", direct)
+	}
+	if got := readText(t, c1); got != direct {
+		t.Fatalf("c1 after SendTo(id1, json.RawMessage(%s)) = %q, want %s", direct, got, direct)
+	}
+
+	hub.Broadcast("after")
+	if got := readText(t, c1); got != `"after"` {
+		t.Fatalf(`c1 after Broadcast("after") = %q, want %s`, got, `"after"`)
+	}
+	if got := readText(t, c2); got != `"after"` {
+		t.Fatalf(`c2 after Broadcast("after") = %q, want %s`, got, `"after"`)
 	}
 }
 
@@ -215,22 +218,6 @@ func TestPongForwardedToCallback(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("pong not forwarded to onMessage")
-	}
-}
-
-func TestErrMsgNormalizesZeroCode(t *testing.T) {
-	var env hb.Envelope
-	if err := json.Unmarshal([]byte(ws.ErrMsg(0, "boom")), &env); err != nil {
-		t.Fatal(err)
-	}
-	if env.Code != 500 || env.Message != "boom" {
-		t.Fatalf("env = %+v, want code 500 boom", env)
-	}
-	if err := json.Unmarshal([]byte(ws.ErrMsg(404, "nope")), &env); err != nil {
-		t.Fatal(err)
-	}
-	if env.Code != 404 {
-		t.Fatalf("env = %+v, want 404", env)
 	}
 }
 
