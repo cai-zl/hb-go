@@ -46,6 +46,7 @@ Keep this direction. There are no interfaces: concrete types are passed explicit
 | `ws/` | `ws` | WebSocket hub on gorilla/websocket |
 | `crypto/` | `crypto` | SHA-256, HMAC-SHA256, `RandomHex`, AES-256-GCM `Encrypt`/`Decrypt` |
 | `password/` | `password` | argon2id (default) / bcrypt / pbkdf2 `Hash`, `Verify`, `Algorithm` |
+| `skills/hb-go/` | — | Skill for consumer projects using hb-go |
 
 ## Development Commands
 
