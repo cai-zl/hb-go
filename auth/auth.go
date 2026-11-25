@@ -101,12 +101,8 @@ func (s *Sessions) rtKey(token string) string { return s.prefix + "r:" + token }
 
 func newToken() string { return crypto.RandomHex(32) }
 
-func recordJSON(data any, peer string, exp int64) (string, error) {
-	raw, err := json.Marshal(data)
-	if err != nil {
-		return "", hb.Internal(err)
-	}
-	rec, err := json.Marshal(SessionRecord{Data: raw, Peer: peer, Exp: exp})
+func recordJSON(data json.RawMessage, peer string, exp int64) (string, error) {
+	rec, err := json.Marshal(SessionRecord{Data: data, Peer: peer, Exp: exp})
 	if err != nil {
 		return "", hb.Internal(err)
 	}
@@ -123,13 +119,17 @@ func parseRecord(raw string) (SessionRecord, error) {
 
 // Create 签发一对新 token,会话数据为登录时业务写入的任意可序列化值。
 func (s *Sessions) Create(data any) (TokenPair, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return TokenPair{}, hb.Internal(err)
+	}
 	at, rt := newToken(), newToken()
 	exp := time.Now().Add(s.tokenTTL).Unix()
-	recAT, err := recordJSON(data, rt, exp)
+	recAT, err := recordJSON(raw, rt, exp)
 	if err != nil {
 		return TokenPair{}, err
 	}
-	recRT, err := recordJSON(data, at, 0)
+	recRT, err := recordJSON(raw, at, 0)
 	if err != nil {
 		return TokenPair{}, err
 	}
@@ -180,11 +180,11 @@ func (s *Sessions) Refresh(refreshToken string) (TokenPair, bool, error) {
 	}
 	at, rt := newToken(), newToken()
 	exp := time.Now().Add(s.tokenTTL).Unix()
-	recAT, err := recordJSON(json.RawMessage(rec.Data), rt, exp)
+	recAT, err := recordJSON(rec.Data, rt, exp)
 	if err != nil {
 		return TokenPair{}, false, err
 	}
-	recRT, err := recordJSON(json.RawMessage(rec.Data), at, 0)
+	recRT, err := recordJSON(rec.Data, at, 0)
 	if err != nil {
 		return TokenPair{}, false, err
 	}
