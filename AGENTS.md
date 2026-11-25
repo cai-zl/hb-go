@@ -11,11 +11,11 @@
 
 ```text
 boot ──► auth, db, nacos, redis, s3, ws, hb         wiring only
-auth ──► crypto, hb
+auth ──► crypto, hb                               sessions and HTTP endpoints
 crypto, db, nacos, password, redis, s3, ws ──► hb   leaf packages; never import each other
 ```
 
-Keep this direction. There are no interfaces: concrete types are passed explicitly, and `boot` is the only assembler.
+Keep this direction. Dependencies are passed as concrete types; `auth.AuthChecker` is the business login extension point, and `boot` is the only assembler.
 
 **Request.** `rg.GET("/x", hb.Wrap(func(c *gin.Context) (any, error) { … }))`:
 
@@ -24,9 +24,9 @@ Keep this direction. There are no interfaces: concrete types are passed explicit
 - Any other error → HTTP 200 `{"code":500,"message":"internal error"}`; the cause is logged with `slog.Warn`.
 - Real status codes are reserved for framework-level failures (`hb.Write` + `c.Abort()`): 404/405 from `hb.New()`, 401 from `auth.Guard` and `/auth/me`, 503 from `/readyz`.
 
-**Startup** (`Boot.run` in `boot/boot.go`). `Serve(mounts, opts...)` reads the `NACOS_*` env, pulls the TOML config from Nacos, then runs with registration and hot reload. `ServeWith(cfg, mounts, opts...)` takes an explicit `Config` and runs standalone unless `WithNacos` is given. Order: logging → connect configured sections (`[db]`, migrations if `WithMigrator`, `[redis]`, `[s3]`, `[auth]`) → hooks in order (first error aborts before listening) → routes (`hb.New()`, mounts, WS endpoints, `/healthz`, `/readyz`) → listen → register → config listener → SIGINT/SIGTERM → `http.Server.Shutdown` → deregister.
+**Startup** (`Boot.run` in `boot/boot.go`). `Serve(mounts, opts...)` reads the `NACOS_*` env, pulls the TOML config from Nacos, then runs with registration and hot reload. `ServeWith(cfg, mounts, opts...)` takes an explicit `Config` and runs standalone unless `WithNacos` is given. Order: validate `WithAuth` has `[auth]` → logging → connect configured sections (`[db]`, migrations if `WithMigrator`, `[redis]`, `[s3]`, `[auth]`) → hooks in order (first error aborts before listening) → routes (`hb.New()`, auth endpoints if enabled, business mounts, WS endpoints, `/healthz`, `/readyz`) → listen → register → config listener → SIGINT/SIGTERM → `http.Server.Shutdown` → deregister.
 
-**Auth.** `auth.Routes(sessions, check)` mounts `POST /auth/token|refresh|revoke` and `GET /auth/me`. `Sessions` keeps two Redis keys, `{prefix}a:{token}` and `{prefix}r:{token}`, each naming the other as `peer`; key TTL is the refresh TTL and access expiry comes from the record's `exp`. `auth.Guard` checks `Authorization: Bearer`, then sets gin keys `hb.session` and `hb.token`; handlers read them with `auth.From[T](c)` / `auth.Token(c)`.
+**Auth.** `auth` implements `POST /auth/token`, `POST /auth/refresh`, `POST /auth/revoke` and `GET /auth/me`. `boot.WithAuth(checker)` tells boot to mount them before business routes. The business implements `auth.AuthChecker`, checking credentials and returning already encoded `json.RawMessage` session data. The option requires `[auth]` and `[redis]`; without it, `[auth]` still assembles `app.Sessions` but exposes no auth endpoints. `Sessions` keeps two Redis keys, `{prefix}a:{token}` and `{prefix}r:{token}`, each naming the other as `peer`; key TTL is the refresh TTL and access expiry comes from the record's `exp`. `auth.Guard` checks `Authorization: Bearer`, then sets gin keys `hb.session` and `hb.token`; handlers read them with `auth.From[T](c)` / `auth.Token(c)`.
 
 **WebSocket.** `ws.Upgrade` registers a `*ws.Conn` in the `Hub` and starts one read goroutine (calls `onMessage` serially) and one write goroutine (256-slot queue, drop + warn when full, ping every `ws.Heartbeat` = 30s).
 
@@ -38,7 +38,7 @@ Keep this direction. There are no interfaces: concrete types are passed explicit
 |---|---|---|
 | `hb.go` | `hb` | `Envelope`, `Wrap`, `Err`/`Errf`/`Internal`, `Write`, `Page`, `New`, `Recovery`, `Response[T]`, `PageData[T]` |
 | `boot/` | `boot` | `Serve`/`ServeWith`, options, `Config`/`ParseConfig`, `App`, `Mount`, `Hook`, `Snapshot[T]` |
-| `auth/` | `auth` | Redis-backed sessions, endpoints, `Guard`, `From[T]` |
+| `auth/` | `auth` | `AuthChecker`, fixed auth endpoints, Redis-backed sessions, `Guard`, `From[T]`, `Token` |
 | `db/` | `db` | `*sql.DB` pool for `pg`/`mysql`/`sqlite`, up-only file migrations |
 | `nacos/` | `nacos` | nacos-sdk-go/v2 wrapper: config fetch/listen, register/deregister |
 | `redis/` | `redis` | go-redis v9 client factory (`Connect`) |
@@ -89,7 +89,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 - `db.Connect`, `redis.Connect` and `s3.Connect` validate, connect and ping immediately; `nacos.ConnectAuth` only validates the address (the SDK client is created lazily and does not dial). In-memory types use `NewX` constructors.
 - `boot.App` holds the wired clients (`DB`, `Redis`, `S3`, `Nacos`, `Sessions`; nil when the section is absent) and `Hub` (always set).
-- Business code plugs in through `boot.Mount = func(app *boot.App, rg *gin.RouterGroup)`, `boot.WithHook(func(*boot.App) error)` and `boot.WithWS(path, onMessage)`. Long-running tasks start their own goroutine inside a hook.
+- Business code plugs in through `boot.Mount = func(app *boot.App, rg *gin.RouterGroup)`, `boot.WithHook(func(*boot.App) error)`, `boot.WithAuth(check auth.AuthChecker)` and `boot.WithWS(path, onMessage)`. Long-running tasks start their own goroutine inside a hook.
 - Functional options (`type Option func(*Boot)`, `WithX`) are used only in `boot`.
 - Generics serve typed helpers: `hb.Response[T]`, `hb.PageData[T]`, `auth.From[T]`, `boot.Snapshot[T]`.
 - JSON is camelCase except `auth.TokenResponse` (OAuth2 snake_case: `access_token`, …). TOML keys are snake_case.
@@ -126,8 +126,9 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 ## Important Files
 
 - `hb.go`: envelope and `Wrap`; every handler depends on it.
-- `boot/boot.go`: `Serve`/`ServeWith`, `Boot.run` startup order, `ParseConfig`, `knownKeys`/`durationKeys`, `Snapshot`.
-- `auth/auth.go`: session record layout, `Guard`, endpoints.
+- `boot/boot.go`: `Serve`/`ServeWith`, `Boot.run` startup order, `WithAuth`, `ParseConfig`, `knownKeys`/`durationKeys`, `Snapshot`.
+- `auth/routes.go`: fixed auth endpoints and their error responses; boot mounts them using the module-internal marker.
+- `auth/auth.go`: `AuthChecker`, session record layout, `Guard`, `From[T]`, `Token`.
 - `db/db.go`: `sqlDrivers` (dialect → driver name), `dialects` (ledger DDL per dialect), `Migrate`.
 - `ws/ws.go`: hub and per-connection loops.
 - `README.md`: full usage reference; see the caveats below.
@@ -148,7 +149,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 ## Testing & QA
 
-- **Layout**: `<pkg>/<pkg>_test.go` in an external `<pkg>_test` package. The two internal test files are exceptions: `boot/boot_internal_test.go` (unexported `resolveLevel`) and `db/db_test.go` (registers the sqlite driver for tests only).
+- **Layout**: tests use an external `<pkg>_test` package by default. Internal tests include `boot/boot_internal_test.go` (`resolveLevel`) and `db/db_test.go` (registers the sqlite driver for tests only).
 - **Style**: no `t.Run`, `t.Parallel` or `testing.Short`; no mocks, interfaces or `testdata/`. Fixtures are inline: TOML string literals, `fstest.MapFS` migrations, Rust vectors, `httptest.NewRecorder` / `httptest.NewServer`, sqlite `:memory:` via `sqlitePool`.
 - **Names**: `Test<Unit><Behaviour>` without underscores (`TestWrapNilOmitsData`, `TestMigrateFailureIsAtomic`); one end-to-end test per area (`TestAuthFlow`, `TestServeStandaloneLifecycle`).
 - **Assertions**: table cases as a plain loop with the case name folded into the message; `t.Fatalf("x = %v, want …")` for failures; errors checked with `errors.As` to `*hb.Error`, then `e.Message` / `e.Code`; JSON decoded to `map[string]any` (numbers are `float64`).

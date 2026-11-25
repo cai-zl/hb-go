@@ -70,6 +70,7 @@ func main() {
 	err := boot.Serve([]boot.Mount{userRoutes},
 		boot.WithMigrator(migrations),
 		boot.WithHook(pushTicker),
+		boot.WithAuth(loginChecker{}), // 实现见下方 auth 小节;需要 [auth] 和 [redis]
 	)
 	if err != nil {
 		panic(err)
@@ -119,6 +120,8 @@ func pushTicker(app *boot.App) error {
 }
 ```
 
+不需要登录端点时，省略 `boot.WithAuth`；业务路由不手动注册 `/auth/*`。
+
 ## 多模块组织
 
 业务长大以后,每个模块一个文件(或包),各自声明一个 `boot.Mount`(Mount 的
@@ -165,6 +168,8 @@ acquire_timeout = "5s"      # time.Duration 字符串;整数则按纳秒
 
 [redis]
 url = "redis://127.0.0.1:6379"
+
+[auth]                       # 组装 app.Sessions;此示例用 WithAuth 暴露四个端点
 
 [extra]                      # 业务配置只写 [extra]
 rate_limit = 100
@@ -228,10 +233,10 @@ boot.ServeWith(cfg, mounts, opts...)             // 显式配置;配 WithNacos �
 - `Mount = func(app *App, rg *gin.RouterGroup)`;`App{Config, DB, Redis, S3, Nacos, Hub, Sessions}`
   只配置了的依赖字段非 nil。
 - 选项:`WithMigrator(embed.FS)`、`WithHook(func(*App) error)`(可多次,顺序执行)、
-  `WithWS(path, onMessage)`、`WithWSClose(path, onMessage, onClose)`、
+  `WithAuth(checker)`、`WithWS(path, onMessage)`、`WithWSClose(path, onMessage, onClose)`、
   `WithLogging(false)`(自带 slog 时关掉内置初始化)、`WithNacos(n)`。
 - 启动顺序:日志(log_level > LOG_LEVEL > info)→ 读配置 → 按段连接依赖 →
-  迁移 → 钩子 → 路由 + `/healthz` `/readyz`(实测 db/redis,不含 s3)→
+  迁移 → 钩子 → auth 端点(有 `WithAuth` 时) → 业务及 WS 路由 + `/healthz` `/readyz`(实测 db/redis,不含 s3)→
   监听 → 注册 → 热更监听 → SIGINT/SIGTERM 优雅停机 + 反注册。
 - 业务配置写 `[extra]`,类型化快照读取,推送后自动刷新:
 
@@ -255,31 +260,48 @@ _ = cfg.RateLimit // 推送后重新调用 Snapshot 得到新值
 Redis 双键会话(`{prefix}a:{token}` / `{prefix}r:{token}` 互存对端),access
 有效期由记录内 exp 判定,键 TTL = refresh TTL。
 
+配置 `[auth]` 和 `[redis]` 后，boot 会组装 `app.Sessions`。只有向 `boot.Serve` 或
+`boot.ServeWith` 传入 `boot.WithAuth(checker)`，boot 才会自动挂载 `auth` 包实现的
+`POST /auth/token`、`POST /auth/refresh`、`POST /auth/revoke`、`GET /auth/me`。
+传入该选项时两段配置均必需，不需要在业务 `Mount` 中注册这些端点。
+
 ```go
-// check:业务凭据校验,返回会话数据;凭据错返回业务错误(HTTP 200 + 业务码)
-check := func(req auth.LoginReq) (any, error) {
+// 使用 encoding/json 和 hb-go 的 auth、boot、password 包。
+type loginChecker struct{}
+
+type sessionData struct {
+	UID  int64  `json:"uid"`
+	Role string `json:"role"`
+}
+
+// 实现 auth.AuthChecker。getUser 是业务查询；账号不存在时返回业务码 401 的错误。
+func (loginChecker) Check(req auth.LoginReq) (json.RawMessage, error) {
 	stored, err := getUser(req.Username)
 	if err != nil {
-		return nil, hb.Err(401, "invalid username or password")
+		return nil, err
 	}
 	if !password.Verify(req.Password, stored.Hash) {
 		return nil, hb.Err(401, "invalid username or password")
 	}
-	return sessionData{UID: stored.ID, Role: stored.Role}, nil
+	return json.Marshal(sessionData{UID: stored.ID, Role: stored.Role})
 }
 
-mount := auth.Routes(app.Sessions, check) // POST /auth/token|refresh|revoke + GET /auth/me
-mount(rg)
+func serveWithAuth(cfg *boot.Config) error {
+	return boot.ServeWith(cfg, []boot.Mount{mountPrivate}, boot.WithAuth(loginChecker{}))
+}
 
-// 受保护路由
-protected := rg.Group("/private", auth.Guard(app.Sessions))
-protected.GET("/who", func(c *gin.Context) {
-	data, err := auth.From[sessionData](c)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-})
+// 业务 Mount 只注册自己的受保护路由；writeBusinessError 是业务的错误出口。
+func mountPrivate(app *boot.App, rg *gin.RouterGroup) {
+	protected := rg.Group("/private", auth.Guard(app.Sessions))
+	protected.GET("/who", func(c *gin.Context) {
+		data, err := auth.From[sessionData](c)
+		if err != nil {
+			writeBusinessError(c, err)
+			return
+		}
+		hb.Write(c, http.StatusOK, hb.Envelope{Code: 0, Message: "ok", Data: data})
+	})
+}
 ```
 
 响应为 OAuth2 风格 snake_case:`{"access_token":..,"refresh_token":..,"token_type":"Bearer","expires_in":7200}`。
