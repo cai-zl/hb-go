@@ -33,7 +33,7 @@ import (
 	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/auth"
 	"github.com/cai-zl/hb-go/db"
-	"github.com/cai-zl/hb-go/internal/bootonly"
+	"github.com/cai-zl/hb-go/internal/api"
 	"github.com/cai-zl/hb-go/nacos"
 	hbredis "github.com/cai-zl/hb-go/redis"
 	"github.com/cai-zl/hb-go/s3"
@@ -449,7 +449,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	// 路由:hb.New 预装 404/405 框架信封;auth 端点 + 业务挂载 + WS 端点 + 健康检查
 	e := hb.New()
 	if b.authCheck != nil {
-		auth.MountRoutes(bootonly.AuthRoutes{}, &e.RouterGroup, app.Sessions, b.authCheck)
+		api.MountAuth(&e.RouterGroup, app.Sessions, b.authCheck)
 	}
 	for _, m := range b.mounts {
 		m(app, &e.RouterGroup)
@@ -466,14 +466,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 			}
 		})
 	}
-	e.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
-	e.GET("/readyz", func(c *gin.Context) {
-		if allReady(app) {
-			c.String(http.StatusOK, "ok")
-		} else {
-			c.String(http.StatusServiceUnavailable, "not ready")
-		}
-	})
+	api.MountHealth(&e.RouterGroup, app.DB, app.Redis)
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Host, cfg.Port))
 	if err != nil {
@@ -568,24 +561,4 @@ func detectIP() (string, error) {
 	}
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String(), nil
-}
-
-// allReady /readyz 本体:只探测配置了的依赖(pg 取连接 / redis ping,
-// 3s 超时),全通过才就绪;不含 s3。
-func allReady(app *App) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if app.DB != nil {
-		if err := app.DB.PingContext(ctx); err != nil {
-			slog.Warn("readiness: db not reachable", "err", err.Error())
-			return false
-		}
-	}
-	if app.Redis != nil {
-		if err := app.Redis.Ping(ctx).Err(); err != nil {
-			slog.Warn("readiness: redis not reachable", "err", err.Error())
-			return false
-		}
-	}
-	return true
 }

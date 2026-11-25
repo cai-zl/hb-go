@@ -1,4 +1,4 @@
-package auth_test
+package api_test
 
 import (
 	"encoding/json"
@@ -14,7 +14,7 @@ import (
 
 	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/auth"
-	"github.com/cai-zl/hb-go/internal/bootonly"
+	"github.com/cai-zl/hb-go/internal/api"
 	"github.com/cai-zl/hb-go/redis"
 )
 
@@ -41,7 +41,7 @@ func newEngine(t *testing.T, sessions *auth.Sessions, check auth.AuthChecker) *g
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	auth.MountRoutes(bootonly.AuthRoutes{}, &r.RouterGroup, sessions, check)
+	api.MountAuth(&r.RouterGroup, sessions, check)
 	return r
 }
 

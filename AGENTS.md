@@ -10,8 +10,9 @@
 ## Architecture & Data Flow
 
 ```text
-boot ──► auth, db, nacos, redis, s3, ws, hb         wiring only
-auth ──► crypto, hb                               sessions and HTTP endpoints
+boot ──► internal/api, auth, db, nacos, redis, s3, ws, hb   wiring only
+internal/api ──► auth, hb                                built-in HTTP endpoints
+auth ──► crypto, hb                                      sessions and auth middleware
 crypto, db, nacos, password, redis, s3, ws ──► hb   leaf packages; never import each other
 ```
 
@@ -26,7 +27,7 @@ Keep this direction. Dependencies are passed as concrete types; `auth.AuthChecke
 
 **Startup** (`Boot.run` in `boot/boot.go`). `Serve(mounts, opts...)` reads the `NACOS_*` env, pulls the TOML config from Nacos, then runs with registration and hot reload. `ServeWith(cfg, mounts, opts...)` takes an explicit `Config` and runs standalone unless `WithNacos` is given. Order: validate `WithAuth` has `[auth]` → logging → connect configured sections (`[db]`, migrations if `WithMigrator`, `[redis]`, `[s3]`, `[auth]`) → hooks in order (first error aborts before listening) → routes (`hb.New()`, auth endpoints if enabled, business mounts, WS endpoints, `/healthz`, `/readyz`) → listen → register → config listener → SIGINT/SIGTERM → `http.Server.Shutdown` → deregister.
 
-**Auth.** `auth` implements `POST /auth/token`, `POST /auth/refresh`, `POST /auth/revoke` and `GET /auth/me`. `boot.WithAuth(checker)` tells boot to mount them before business routes. The business implements `auth.AuthChecker`, checking credentials and returning already encoded `json.RawMessage` session data. The option requires `[auth]` and `[redis]`; without it, `[auth]` still assembles `app.Sessions` but exposes no auth endpoints. `Sessions` keeps two Redis keys, `{prefix}a:{token}` and `{prefix}r:{token}`, each naming the other as `peer`; key TTL is the refresh TTL and access expiry comes from the record's `exp`. `auth.Guard` checks `Authorization: Bearer`, then sets gin keys `hb.session` and `hb.token`; handlers read them with `auth.From[T](c)` / `auth.Token(c)`.
+**Auth.** `internal/api` implements `POST /auth/token`, `POST /auth/refresh`, `POST /auth/revoke` and `GET /auth/me`. `boot.WithAuth(checker)` tells boot to mount them before business routes. The business implements `auth.AuthChecker`, checking credentials and returning already encoded `json.RawMessage` session data. The option requires `[auth]` and `[redis]`; without it, `[auth]` still assembles `app.Sessions` but exposes no auth endpoints. `Sessions` keeps two Redis keys, `{prefix}a:{token}` and `{prefix}r:{token}`, each naming the other as `peer`; key TTL is the refresh TTL and access expiry comes from the record's `exp`. `auth.Guard` checks `Authorization: Bearer`, then sets gin keys `hb.session` and `hb.token`; handlers read them with `auth.From[T](c)` / `auth.Token(c)`.
 
 **WebSocket.** `ws.Upgrade` registers a `*ws.Conn` in the `Hub` and starts one read goroutine (calls `onMessage` serially) and one write goroutine (256-slot queue, drop + warn when full, ping every `ws.Heartbeat` = 30s).
 
@@ -38,7 +39,8 @@ Keep this direction. Dependencies are passed as concrete types; `auth.AuthChecke
 |---|---|---|
 | `hb.go` | `hb` | `Envelope`, `Err`/`Errf`/`Internal`, `Write`, `Page`, `New`, `Recovery`, `Response[T]`, `PageData[T]` |
 | `boot/` | `boot` | `Serve`/`ServeWith`, options, `Config`/`ParseConfig`, `App`, `Mount`, `Hook`, `Snapshot[T]` |
-| `auth/` | `auth` | `AuthChecker`, fixed auth endpoints, Redis-backed sessions, `Guard`, `From[T]`, `Token` |
+|`auth/`|`auth`|`AuthChecker`, Redis-backed sessions, `Guard`, `From[T]`, `Token`|
+|`internal/api/`|`api`|Built-in auth endpoints and `/healthz` / `/readyz` probes|
 | `db/` | `db` | `*sql.DB` pool for `pg`/`mysql`/`sqlite`, up-only file migrations |
 | `nacos/` | `nacos` | nacos-sdk-go/v2 wrapper: config fetch/listen, register/deregister |
 | `redis/` | `redis` | go-redis v9 client factory (`Connect`) |
@@ -127,7 +129,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 - `hb.go`: response envelope, pagination, error helpers and Gin engine setup.
 - `boot/boot.go`: `Serve`/`ServeWith`, `Boot.run` startup order, `WithAuth`, `ParseConfig`, `knownKeys`/`durationKeys`, `Snapshot`.
-- `auth/routes.go`: fixed auth endpoints and their error responses; boot mounts them using the module-internal marker.
+- `internal/api/auth.go`, `internal/api/health.go`: built-in auth endpoints and health probes, mounted by `boot`.
 - `auth/auth.go`: `AuthChecker`, session record layout, `Guard`, `From[T]`, `Token`.
 - `db/db.go`: `sqlDrivers` (dialect → driver name), `dialects` (ledger DDL per dialect), `Migrate`.
 - `ws/ws.go`: hub and per-connection loops.
@@ -143,7 +145,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 - Go 1.27.3 (`go 1.27.3` in `go.mod`, no `toolchain` line). The code relies on `log/slog`, `crypto/pbkdf2` and generics.
 - Pure Go: no cgo, no build tags, no `go:generate`, no `vendor/`, no `go.work`.
-- Direct deps: gin, gorilla/websocket, pgx/v5, minio-go/v7, nacos-sdk-go/v2, go-toml/v2, go-redis/v9, x/crypto, modernc.org/sqlite (imported only by `db` tests). Prefer the stdlib over a new dependency.
+- Direct deps: gin, gorilla/websocket, pgx/v5, minio-go/v7, nacos-sdk-go/v2, go-toml/v2, go-redis/v9, x/crypto, modernc.org/sqlite (test imports only). Prefer the stdlib over a new dependency.
 - Tests use the stdlib `testing` package only: no testify, no mock generators.
 
 ## Testing & QA
@@ -158,7 +160,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 | Env var | Tests | What it touches |
 |---|---|---|
 | `TEST_DATABASE_URL` | `db.TestMigratePg` | runs migrations, then **drops tables `hb_demo` and `hb_migrations`** |
-| `TEST_REDIS_URL` | `auth.TestAuthFlow`, `redis.TestConnectPing` | session keys under `hb:auth:` (30-day TTL); key `hb_test` without TTL |
+|`TEST_REDIS_URL`|`internal/api.TestAuthFlow`, `redis.TestConnectPing`|session keys under `hb:auth:` (30-day TTL); key `hb_test` without TTL|
 | `TEST_S3_ENDPOINT`, `TEST_S3_BUCKET`, `TEST_S3_ACCESS_KEY`, `TEST_S3_SECRET_KEY` | `s3.TestS3RoundTrip`, `s3.TestPresignLimits` | puts and deletes `hb-test/roundtrip.txt` in the bucket |
 | `TEST_NACOS_ADDR` | `nacos.TestNacosIntegration` | reads `hb-test.toml` in `DEFAULT_GROUP`; registers and deregisters `hb-test-svc` |
 

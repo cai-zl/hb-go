@@ -1,4 +1,5 @@
-package auth
+// Package api 实现框架内置的 HTTP 端点。
+package api
 
 import (
 	"encoding/json"
@@ -8,13 +9,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/cai-zl/hb-go"
-	"github.com/cai-zl/hb-go/internal/bootonly"
+	"github.com/cai-zl/hb-go/auth"
 )
 
-// MountRoutes 挂载固定的鉴权端点,仅供 boot 装配。业务使用 boot.WithAuth。
-func MountRoutes(_ bootonly.AuthRoutes, rg *gin.RouterGroup, sessions *Sessions, check AuthChecker) {
+// MountAuth 挂载固定的鉴权端点,仅供 boot 装配。业务使用 boot.WithAuth。
+func MountAuth(rg *gin.RouterGroup, sessions *auth.Sessions, check auth.AuthChecker) {
 	rg.POST("/auth/token", func(c *gin.Context) {
-		var req LoginReq
+		var req auth.LoginReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			hb.Write(c, http.StatusOK, hb.Envelope{Code: 400, Message: "invalid request body"})
 			return
@@ -34,7 +35,7 @@ func MountRoutes(_ bootonly.AuthRoutes, rg *gin.RouterGroup, sessions *Sessions,
 		}
 	})
 	rg.POST("/auth/refresh", func(c *gin.Context) {
-		var req RefreshReq
+		var req auth.RefreshReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			hb.Write(c, http.StatusOK, hb.Envelope{Code: 400, Message: "invalid request body"})
 			return
@@ -53,7 +54,7 @@ func MountRoutes(_ bootonly.AuthRoutes, rg *gin.RouterGroup, sessions *Sessions,
 		}
 	})
 	rg.POST("/auth/revoke", func(c *gin.Context) {
-		var req RevokeReq
+		var req auth.RevokeReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			hb.Write(c, http.StatusOK, hb.Envelope{Code: 400, Message: "invalid request body"})
 			return
@@ -66,8 +67,8 @@ func MountRoutes(_ bootonly.AuthRoutes, rg *gin.RouterGroup, sessions *Sessions,
 			hb.Write(c, http.StatusOK, hb.Envelope{Code: 0, Message: "ok"})
 		}
 	})
-	rg.GET("/auth/me", Guard(sessions), func(c *gin.Context) {
-		data, err := From[json.RawMessage](c)
+	rg.GET("/auth/me", auth.Guard(sessions), func(c *gin.Context) {
+		data, err := auth.From[json.RawMessage](c)
 		if err != nil {
 			writeAuthRouteError(c, err)
 			return
@@ -76,8 +77,8 @@ func MountRoutes(_ bootonly.AuthRoutes, rg *gin.RouterGroup, sessions *Sessions,
 	})
 }
 
-func tokenResponse(pair TokenPair, sessions *Sessions) TokenResponse {
-	return TokenResponse{
+func tokenResponse(pair auth.TokenPair, sessions *auth.Sessions) auth.TokenResponse {
+	return auth.TokenResponse{
 		AccessToken:  pair.AccessToken,
 		RefreshToken: pair.RefreshToken,
 		TokenType:    "Bearer",
