@@ -1,9 +1,4 @@
-// Package hb 提供统一 HTTP 响应信封:业务响应 HTTP 状态恒为 200,
-// body 形如 {"code":0,"message":"ok","data":...}。
-//
-// handler 由 Wrap 适配:业务返回 (any, error),nil error 写成功信封,
-// 非 nil error 写失败信封;非 *Error 的裸 error 统一掩码为 internal error,
-// 原文进日志。
+// Package hb 提供 HTTP 响应信封、分页、错误工具和 Gin 引擎初始化。
 package hb
 
 import (
@@ -29,7 +24,7 @@ type Response[T any] struct {
 	Data    *T     `json:"data"`
 }
 
-// PageData 解析分页信封的 data。
+// PageData 是构造和解析分页信封 data 共用的类型，T 为列表元素类型。
 type PageData[T any] struct {
 	List     []T    `json:"list"`
 	Total    uint64 `json:"total"`
@@ -66,7 +61,7 @@ func Errf(code int, format string, args ...any) error {
 }
 
 // mask 把任意 error 变成 *Error:*Error 原样保留,其余掩码为 internal
-// error,原文 warn 进日志。Wrap 由此统一兜底。
+// error,原文 warn 进日志。
 func mask(err error) *Error {
 	var e *Error
 	if errors.As(err, &e) {
@@ -92,40 +87,15 @@ func normCode(code int) int {
 	return code
 }
 
-// Write 写信封。框架级错误(404/405、Guard 的 401)用真实状态码,
-// 业务信封一律 200。
+// Write 使用调用者给定的 HTTP 状态写信封。
 func Write(c *gin.Context, status int, env Envelope) {
 	c.JSON(status, env)
 }
 
-// Paged 是分页 data 的形状(handler 返回值)。
-type Paged struct {
-	List     any    `json:"list"`
-	Total    uint64 `json:"total"`
-	Page     uint64 `json:"page"`
-	PageSize uint64 `json:"pageSize"`
-}
-
-// Page 构造分页 data:handler 里 return hb.Page(users, 2, 1, 20), nil。
-func Page(list any, total, page, pageSize uint64) *Paged {
-	return &Paged{List: list, Total: total, Page: page, PageSize: pageSize}
-}
-
-// Wrap 把业务处理函数转成 gin 处理函数。返回的 error 为 nil 且响应尚未写出时
-// 写成功信封(handler 已自写响应如文件下载则不再覆盖);*Error 按其
-// code/message 写失败信封,其余 error 掩码为 internal error。
-func Wrap(fn func(c *gin.Context) (any, error)) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		data, err := fn(c)
-		if err != nil {
-			e := mask(err)
-			Write(c, 200, Envelope{Code: normCode(e.Code), Message: e.Message})
-			return
-		}
-		if !c.Writer.Written() {
-			Write(c, 200, Envelope{Code: 0, Message: "ok", Data: data})
-		}
-	}
+// Page 构造分页信封的 data。T 是列表元素类型，通常从 list 推断。
+// 不复制切片；nil 切片编码为 null，非 nil 空切片编码为 []。
+func Page[T any](list []T, total, page, pageSize uint64) *PageData[T] {
+	return &PageData[T]{List: list, Total: total, Page: page, PageSize: pageSize}
 }
 
 // New 返回预装框架级错误信封的 gin 引擎:未匹配路由 404、方法不允许 405,

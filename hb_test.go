@@ -3,11 +3,12 @@ package hb_test
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/cai-zl/hb-go"
+	"github.com/gin-gonic/gin"
 )
 
 func get(t *testing.T, h gin.HandlerFunc) (*httptest.ResponseRecorder, map[string]any) {
@@ -24,64 +25,11 @@ func get(t *testing.T, h gin.HandlerFunc) (*httptest.ResponseRecorder, map[strin
 	return w, body
 }
 
-func TestWrapSuccessShape(t *testing.T) {
-	w, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) {
-		return map[string]any{"a": 1}, nil
-	}))
-	if w.Code != 200 {
-		t.Fatalf("status = %d, want 200", w.Code)
-	}
-	if body["code"] != float64(0) || body["message"] != "ok" || body["data"].(map[string]any)["a"] != float64(1) {
-		t.Fatalf("body = %v", body)
-	}
-}
-
-func TestWrapNilOmitsData(t *testing.T) {
-	_, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) { return nil, nil }))
-	if _, ok := body["data"]; ok {
-		t.Fatalf("data should be omitted, got %v", body)
-	}
-}
-
-func TestWrapBizError(t *testing.T) {
-	_, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) {
-		return nil, hb.Err(400, "no such user")
-	}))
-	if body["code"] != float64(400) || body["message"] != "no such user" {
-		t.Fatalf("body = %v", body)
-	}
-	if _, ok := body["data"]; ok {
-		t.Fatalf("error envelope should omit data: %v", body)
-	}
-}
-
 func TestErrZeroCodeIs500(t *testing.T) {
-	_, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) { return nil, hb.Err(0, "boom") }))
-	if body["code"] != float64(500) || body["message"] != "boom" {
-		t.Fatalf("body = %v", body)
-	}
-}
-
-func TestWrapBareErrorMasked(t *testing.T) {
-	_, body := get(t, hb.Wrap(func(c *gin.Context) (any, error) {
-		return nil, errors.New("pg: connection refused")
-	}))
-	if body["code"] != float64(500) || body["message"] != "internal error" {
-		t.Fatalf("body = %v", body)
-	}
-}
-
-func TestWrapSelfWritten(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	e := gin.New()
-	e.GET("/", hb.Wrap(func(c *gin.Context) (any, error) {
-		c.Data(200, "text/plain", []byte("raw"))
-		return nil, nil
-	}))
-	w := httptest.NewRecorder()
-	e.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
-	if w.Body.String() != "raw" || w.Header().Get("Content-Type") != "text/plain" {
-		t.Fatalf("self-written response overwritten: %s", w.Body.String())
+	err := hb.Err(0, "boom")
+	var e *hb.Error
+	if !errors.As(err, &e) || e.Code != 500 || e.Message != "boom" {
+		t.Fatalf(`hb.Err(0, "boom") = %v, want *hb.Error with code 500 and message "boom"`, err)
 	}
 }
 
@@ -93,9 +41,12 @@ func TestErrf(t *testing.T) {
 }
 
 func TestPageValue(t *testing.T) {
-	w, _ := get(t, hb.Wrap(func(c *gin.Context) (any, error) {
-		return hb.Page([]int{1, 2}, 42, 2, 20), nil
-	}))
+	w, _ := get(t, func(c *gin.Context) {
+		hb.Write(c, http.StatusOK, hb.Envelope{Code: 0, Message: "ok", Data: hb.Page([]int{1, 2}, 42, 2, 20)})
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("page response status = %d, want %d", w.Code, http.StatusOK)
+	}
 	if want := `{"code":0,"message":"ok","data":{"list":[1,2],"total":42,"page":2,"pageSize":20}}`; w.Body.String() != want {
 		t.Fatalf("body = %s, want %s", w.Body.String(), want)
 	}
