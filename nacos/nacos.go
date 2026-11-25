@@ -4,6 +4,7 @@
 package nacos
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,8 +17,6 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/common/constant"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 	"github.com/pelletier/go-toml/v2"
-
-	"github.com/cai-zl/hb-go"
 )
 
 // Config 环境变量语义的连接参数(DataID/Group 仅 FromEnv 填充)。
@@ -42,7 +41,7 @@ type Nacos struct {
 func FromEnv() (Config, error) {
 	serverAddr := os.Getenv("NACOS_SERVER_ADDR")
 	if serverAddr == "" {
-		return Config{}, hb.Err(500, "missing env: NACOS_SERVER_ADDR")
+		return Config{}, errors.New("missing env: NACOS_SERVER_ADDR")
 	}
 	cfg := Config{
 		ServerAddr: serverAddr,
@@ -72,13 +71,13 @@ func Connect(serverAddr, namespace string) (*Nacos, error) {
 // ConnectAuth 连接 Nacos;username 与 password 均非空才启用鉴权。
 func ConnectAuth(serverAddr, namespace, username, password string) (*Nacos, error) {
 	if serverAddr == "" {
-		return nil, hb.Err(500, "nacos config: server addr is required")
+		return nil, errors.New("nacos config: server addr is required")
 	}
 	var servers []constant.ServerConfig
 	for _, addr := range strings.Split(serverAddr, ",") {
 		host, portStr, err := splitHostPort(strings.TrimSpace(addr))
 		if err != nil {
-			return nil, hb.Errf(500, "nacos config: bad server addr %q: %v", addr, err)
+			return nil, fmt.Errorf("nacos config: bad server addr %q: %w", addr, err)
 		}
 		servers = append(servers, constant.ServerConfig{
 			IpAddr:      host,
@@ -99,11 +98,11 @@ func ConnectAuth(serverAddr, namespace, username, password string) (*Nacos, erro
 	param := &vo.NacosClientParam{ClientConfig: clientCfg, ServerConfigs: servers}
 	configClient, err := clients.NewConfigClient(*param)
 	if err != nil {
-		return nil, hb.Internal(err)
+		return nil, err
 	}
 	namingClient, err := clients.NewNamingClient(*param)
 	if err != nil {
-		return nil, hb.Internal(err)
+		return nil, err
 	}
 	return &Nacos{config: configClient, naming: namingClient}, nil
 }
@@ -129,7 +128,7 @@ func (n *Nacos) GetConfig(dataID, group string) (string, bool, error) {
 		return "", false, nil
 	}
 	if err != nil {
-		return "", false, hb.Internal(err)
+		return "", false, err
 	}
 	if content == "" {
 		return "", false, nil
@@ -149,10 +148,10 @@ func (n *Nacos) LoadConfig(dataID, group string, target any) (bool, error) {
 	return true, nil
 }
 
-// ParseConfig 解析 TOML 配置文本(与根包同款错误信封:config: <原因>)。
+// ParseConfig 解析 TOML 配置文本(与 boot.ParseConfig 同款 config: 前缀)。
 func ParseConfig(text string, target any) error {
 	if err := toml.Unmarshal([]byte(text), target); err != nil {
-		return hb.Errf(500, "config: %v", err)
+		return fmt.Errorf("config: %w", err)
 	}
 	return nil
 }
@@ -167,7 +166,7 @@ func (n *Nacos) ListenConfig(dataID, group string, onChange func(content string)
 		},
 	})
 	if err != nil {
-		return hb.Internal(err)
+		return err
 	}
 	return nil
 }
@@ -185,7 +184,7 @@ func (n *Nacos) Register(service, ip string, port uint64, group string) error {
 		Ephemeral:   true,
 	})
 	if err != nil || !ok {
-		return hb.Internal(err)
+		return err
 	}
 	return nil
 }
@@ -200,7 +199,7 @@ func (n *Nacos) Deregister(service, ip string, port uint64, group string) error 
 		Ephemeral:   true,
 	})
 	if err != nil {
-		return hb.Internal(err)
+		return err
 	}
 	_ = ok
 	return nil

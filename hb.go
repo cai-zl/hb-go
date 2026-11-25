@@ -32,7 +32,7 @@ type PageData[T any] struct {
 	PageSize uint64 `json:"pageSize"`
 }
 
-// Error 是业务/基础设施错误的统一类型,实现 error 接口。
+// Error 是 HTTP 响应里可公开的错误码与消息,实现 error 接口。
 type Error struct {
 	Code    int
 	Message string
@@ -49,8 +49,8 @@ func (e *Error) Error() string {
 // Unwrap 暴露被掩码的原始错误(仅 Internal 构造的才有)。
 func (e *Error) Unwrap() error { return e.origin }
 
-// Err 构造业务错误(如参数校验、凭据错误),信息会原样写给调用方。
-// code 为 0 时归一为 500。
+// Err 构造准备写给 HTTP 客户端公开的错误(如参数校验、凭据错误),信息会原样
+// 写给调用方。code 为 0 时归一为 500。
 func Err(code int, msg string) error {
 	return &Error{Code: normCode(code), Message: msg}
 }
@@ -71,8 +71,8 @@ func mask(err error) *Error {
 	return &Error{Code: 500, Message: "internal error", origin: err}
 }
 
-// Internal 掩码基础设施错误:写给调用方固定 internal error,原文可经
-// errors.As/Unwrap 取回(仅日志/测试用)。
+// Internal 在 HTTP 边界记录并掩码未知错误:写给调用方固定 internal error,
+// 原文 warn 进日志,可经 errors.As/Unwrap 取回(仅日志/测试用)。
 func Internal(err error) error {
 	if err == nil {
 		return nil

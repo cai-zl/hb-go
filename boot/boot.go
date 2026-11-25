@@ -13,6 +13,7 @@ package boot
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -102,7 +103,7 @@ func normalizeDurations(raw map[string]any) error {
 			}
 			d, err := time.ParseDuration(s)
 			if err != nil {
-				return hb.Errf(500, "config: %s.%s: invalid duration %q", section, k, s)
+				return fmt.Errorf("config: %s.%s: invalid duration %q", section, k, s)
 			}
 			st[k] = int64(d)
 		}
@@ -126,14 +127,14 @@ type App struct {
 func ParseConfig(text string) (*Config, error) {
 	var raw map[string]any
 	if err := toml.Unmarshal([]byte(text), &raw); err != nil {
-		return nil, hb.Errf(500, "config: %v", err)
+		return nil, fmt.Errorf("config: %w", err)
 	}
 	if err := normalizeDurations(raw); err != nil {
 		return nil, err
 	}
 	norm, err := toml.Marshal(raw)
 	if err != nil {
-		return nil, hb.Errf(500, "config: %v", err)
+		return nil, fmt.Errorf("config: %w", err)
 	}
 	var rc struct {
 		Port        int             `toml:"port"`
@@ -149,13 +150,13 @@ func ParseConfig(text string) (*Config, error) {
 		Extra       map[string]any  `toml:"extra"`
 	}
 	if err := toml.Unmarshal(norm, &rc); err != nil {
-		return nil, hb.Errf(500, "config: %v", err)
+		return nil, fmt.Errorf("config: %w", err)
 	}
 	if rc.Port == 0 {
-		return nil, hb.Err(500, "boot config: port is required")
+		return nil, errors.New("boot config: port is required")
 	}
 	if rc.Port < 0 || rc.Port > 65535 {
-		return nil, hb.Errf(500, "boot config: port out of range: %d", rc.Port)
+		return nil, fmt.Errorf("boot config: port out of range: %d", rc.Port)
 	}
 	appName := rc.AppName
 	if appName == "" {
@@ -353,7 +354,7 @@ func Serve(mounts []Mount, opts ...Option) error {
 		return err
 	}
 	if !found {
-		return hb.Errf(500, "nacos config not found: %s/%s", nc.DataID, nc.Group)
+		return fmt.Errorf("nacos config not found: %s/%s", nc.DataID, nc.Group)
 	}
 	cfg, err := ParseConfig(text)
 	if err != nil {
@@ -379,7 +380,7 @@ type hotReload struct {
 
 func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	if b.authCheck != nil && cfg.Auth == nil {
-		return hb.Err(500, "boot config: WithAuth requires an [auth] section")
+		return errors.New("boot config: WithAuth requires an [auth] section")
 	}
 
 	var applyLog func(string)
@@ -393,7 +394,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	if advertise == "" {
 		ip, err := detectIP()
 		if err != nil {
-			return hb.Err(500, "cannot detect local ip; set advertise_ip in config")
+			return fmt.Errorf("cannot detect local ip; set advertise_ip in config: %w", err)
 		}
 		advertise = ip
 	}
@@ -429,7 +430,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	}
 	if cfg.Auth != nil {
 		if app.Redis == nil {
-			return hb.Err(500, "boot config: [auth] requires a [redis] section")
+			return errors.New("boot config: [auth] requires a [redis] section")
 		}
 		app.Sessions = auth.NewSessions(app.Redis, *cfg.Auth)
 	}
@@ -460,6 +461,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 			if err := ws.Upgrade(app.Hub, c.Writer, c.Request, func(conn *ws.Conn, msg ws.Message) {
 				onMessage(app, conn, msg)
 			}); err != nil {
+				slog.Warn("websocket handshake failed", "err", err)
 				if !c.Writer.Written() {
 					hb.Write(c, http.StatusOK, hb.Envelope{Code: 500, Message: "handshake failed"})
 				}
@@ -470,7 +472,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Host, cfg.Port))
 	if err != nil {
-		return hb.Errf(500, "bind %s:%d failed: %v", cfg.Host, cfg.Port, err)
+		return fmt.Errorf("bind %s:%d failed: %w", cfg.Host, cfg.Port, err)
 	}
 	slog.Info("listening", "host", cfg.Host, "port", cfg.Port)
 
@@ -557,7 +559,7 @@ func initLogging(level string) func(string) {
 func detectIP() (string, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
-		return "", hb.Internal(err)
+		return "", err
 	}
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String(), nil

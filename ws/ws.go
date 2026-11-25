@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-
-	"github.com/cai-zl/hb-go"
 )
 
 // Heartbeat 服务端 Ping 周期。
@@ -195,7 +193,7 @@ var upgrader = websocket.Upgrader{
 func Upgrade(hub *Hub, w http.ResponseWriter, r *http.Request, onMessage func(*Conn, Message)) error {
 	socket, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		return hb.Internal(err)
+		return err
 	}
 	c := &Conn{
 		IP:        remoteIP(r),

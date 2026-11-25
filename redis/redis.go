@@ -4,11 +4,10 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
-
-	"github.com/cai-zl/hb-go"
 )
 
 // Config 对应 TOML [redis] 段,url 必填。
@@ -21,11 +20,11 @@ type Config struct {
 // Connect 建立客户端并立即 Ping 校验连通性。
 func Connect(cfg Config) (*goredis.Client, error) {
 	if cfg.URL == "" {
-		return nil, hb.Err(500, "redis config: url is required")
+		return nil, errors.New("redis config: url is required")
 	}
 	opts, err := goredis.ParseURL(cfg.URL)
 	if err != nil {
-		return nil, hb.Internal(err)
+		return nil, errors.New("redis config: invalid url")
 	}
 	if cfg.PoolSize > 0 {
 		opts.PoolSize = cfg.PoolSize
@@ -44,7 +43,7 @@ func Connect(cfg Config) (*goredis.Client, error) {
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
-		return nil, hb.Internal(err)
+		return nil, err
 	}
 	return client, nil
 }

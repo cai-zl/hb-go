@@ -67,14 +67,14 @@ func TestDecryptUniformFailure(t *testing.T) {
 	}
 	for name, input := range cases {
 		out, err := crypto.Decrypt("right-key", input)
-		if err == nil || err.Error() != "500 crypto: decrypt failed" {
-			t.Fatalf("%s: err = %v, want uniform 500 crypto: decrypt failed", name, err)
+		if err == nil || err.Error() != "crypto: decrypt failed" {
+			t.Fatalf("%s: err = %v, want uniform crypto: decrypt failed", name, err)
 		}
 		if out != nil {
 			t.Fatalf("%s: out should be nil", name)
 		}
 	}
-	if _, err := crypto.Decrypt("other-key", enc); err == nil || err.Error() != "500 crypto: decrypt failed" {
+	if _, err := crypto.Decrypt("other-key", enc); err == nil || err.Error() != "crypto: decrypt failed" {
 		t.Fatal("wrong key should fail uniformly")
 	}
 }

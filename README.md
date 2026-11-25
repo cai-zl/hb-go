@@ -57,7 +57,9 @@ package main
 import (
 	"embed"
 	"errors"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -77,7 +79,8 @@ func main() {
 		boot.WithAuth(loginChecker{}), // 实现见下方 auth 小节;需要 [auth] 和 [redis]
 	)
 	if err != nil {
-		panic(err)
+		slog.Error("startup failed", "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -204,6 +207,8 @@ rate_limit = 100
 **旧版迁移：** 将 `hb.Wrap` 调用改成原生 `func(c *gin.Context)`。复用业务项目已有的统一响应和错误出口；没有时在项目 HTTP 层定义一处标准，不在每条 handler 重写。
 
 采用 hb 信封时，用 `hb.Write` / `hb.Envelope` 写响应，`hb.Page` 构造分页，`hb.Err` / `hb.Errf` 表达可公开的业务错误。沿用旧协议时，常规响应使用 HTTP 200，由 `code` 表达业务结果。未知错误先用 `hb.Internal` 掩码，只写识别出的 `*hb.Error.Code` / `.Message`，不把底层原因或凭据写给客户端。
+
+配置、启动与依赖操作（`boot`、`db`、`redis`、`s3`、`nacos`、`auth.Sessions`、`crypto`、`password`、`ws`）返回普通 `error`，日志由消费错误的一方处理；非 HTTP 调用不使用 `hb.Err` / `hb.Errf` / `hb.Internal`，只有 HTTP 层才把错误变成可公开的信封。
 
 ```go
 e := hb.New() // 预装 404/405 框架信封的 gin 引擎(Recovery 需显式 e.Use)

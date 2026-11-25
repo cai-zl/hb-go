@@ -7,27 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/s3"
 )
-
-func msgOf(t *testing.T, err error) string {
-	t.Helper()
-	var e *hb.Error
-	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hb.Error, got %v", err)
-	}
-	return e.Message
-}
-
-func codeOf(t *testing.T, err error) int {
-	t.Helper()
-	var e *hb.Error
-	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hb.Error, got %v", err)
-	}
-	return e.Code
-}
 
 func TestConnectValidatesRequiredFields(t *testing.T) {
 	cases := []struct {
@@ -41,9 +22,17 @@ func TestConnectValidatesRequiredFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := s3.Connect(tc.cfg)
-		if err == nil || !strings.Contains(msgOf(t, err), tc.want) {
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%s: err = %v, want %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+func TestConnectRejectsBadEndpoint(t *testing.T) {
+	// 坏端口让 minio.New 直接失败:不回显端点(可能含凭据),也不发请求
+	client, err := s3.Connect(s3.Config{Endpoint: "http://user:fake-secret@127.0.0.1:badport/", Bucket: "b", AccessKeyID: "key", SecretAccessKey: "secret"})
+	if client != nil || err == nil || err.Error() != "s3 config: failed to initialize client" {
+		t.Fatalf("Connect(bad endpoint) = %v, %v; want nil client and a redacted init failure", client, err)
 	}
 }
 
@@ -80,8 +69,8 @@ func TestS3RoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("exists = %v (err %v), want true", ok, err)
 	}
-	if _, err := s.Get("hb-test/missing.txt"); err == nil || codeOf(t, err) != 404 {
-		t.Fatalf("missing err = %v, want 404 object not found", err)
+	if _, err := s.Get("hb-test/missing.txt"); !errors.Is(err, s3.ErrNotFound) {
+		t.Fatalf("missing err = %v, want ErrNotFound", err)
 	}
 	u, err := s.PresignGet(key, 60)
 	if err != nil || !strings.Contains(u, "X-Amz-Signature") {
@@ -102,10 +91,11 @@ func TestS3RoundTrip(t *testing.T) {
 func TestPresignLimits(t *testing.T) {
 	s := integrationS3(t)
 	for _, secs := range []time.Duration{0, 604801 * time.Second} {
-		if _, err := s.PresignGet("k", secs); err == nil || !strings.Contains(msgOf(t, err), "presign") {
+		if _, err := s.PresignGet("k", secs); err == nil || !strings.Contains(err.Error(), "presign") {
 			t.Fatalf("PresignGet(%v) err = %v, want limit error", secs, err)
 		}
-		if _, err := s.PresignPut("k", secs, "text/plain"); err == nil || !strings.Contains(msgOf(t, err), "presign") {
+		if _, err := s.PresignPut("k", secs, "text/plain"); err == nil || !strings.Contains(err.Error(), "presign") {
+			t.Fatalf("PresignPut(%v) err = %v, want limit error", secs, err)
 		}
 	}
 }

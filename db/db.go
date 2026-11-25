@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -19,9 +20,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
-
-	"github.com/cai-zl/hb-go"
 )
 
 // Config 对应 TOML [db] 段,driver 与 url 必填,其余有缺省值。
@@ -40,12 +40,12 @@ func (cfg Config) validate() error {
 	switch cfg.Driver {
 	case "pg", "mysql", "sqlite":
 	case "":
-		return hb.Err(500, "db config: driver is required (pg, mysql or sqlite)")
+		return errors.New("db config: driver is required (pg, mysql or sqlite)")
 	default:
-		return hb.Errf(500, "db config: unknown driver %q (want pg, mysql or sqlite)", cfg.Driver)
+		return fmt.Errorf("db config: unknown driver %q (want pg, mysql or sqlite)", cfg.Driver)
 	}
 	if cfg.URL == "" {
-		return hb.Err(500, "db config: url is required")
+		return errors.New("db config: url is required")
 	}
 	return nil
 }
@@ -58,7 +58,7 @@ func Connect(cfg Config) (*sql.DB, error) {
 	}
 	pool, err := sql.Open(sqlDrivers[cfg.Driver], cfg.URL)
 	if err != nil {
-		return nil, hb.Internal(fmt.Errorf("db connect: %w (import the driver in main.go)", err))
+		return nil, fmt.Errorf("db connect: %w (import the driver in main.go)", err)
 	}
 	maxConns := cfg.MaxConns
 	if maxConns <= 0 {
@@ -73,7 +73,11 @@ func Connect(cfg Config) (*sql.DB, error) {
 	defer cancel()
 	if err := pool.PingContext(ctx); err != nil {
 		pool.Close()
-		return nil, hb.Internal(err)
+		var perr *pgconn.ParseConfigError
+		if errors.As(err, &perr) {
+			return nil, errors.New("db config: invalid pg url")
+		}
+		return nil, err
 	}
 	return pool, nil
 }
@@ -128,14 +132,14 @@ var dialects = map[string]dialect{
 func Migrate(cfg Config, pool *sql.DB, fsys fs.FS) error {
 	d, ok := dialects[cfg.Driver]
 	if !ok {
-		return hb.Errf(500, "db config: unknown driver %q (want pg, mysql or sqlite)", cfg.Driver)
+		return fmt.Errorf("db config: unknown driver %q (want pg, mysql or sqlite)", cfg.Driver)
 	}
 	exec := pool
 	switch cfg.Driver {
 	case "pg":
 		connCfg, err := pgx.ParseConfig(cfg.URL)
 		if err != nil {
-			return hb.Internal(fmt.Errorf("db config: %w", err))
+			return errors.New("db config: invalid pg url")
 		}
 		connCfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 		exec = stdlib.OpenDB(*connCfg)
@@ -143,15 +147,15 @@ func Migrate(cfg Config, pool *sql.DB, fsys fs.FS) error {
 		defer exec.Close()
 	case "mysql":
 		if !strings.Contains(cfg.URL, "multiStatements=true") {
-			return hb.Err(500, "db config: mysql migrations need multiStatements=true in the DSN")
+			return errors.New("db config: mysql migrations need multiStatements=true in the DSN")
 		}
 	}
 	if _, err := exec.ExecContext(context.Background(), d.create); err != nil {
-		return hb.Internal(err)
+		return err
 	}
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
-		return hb.Internal(err)
+		return err
 	}
 	type mig struct {
 		id   int64
@@ -168,15 +172,15 @@ func Migrate(cfg Config, pool *sql.DB, fsys fs.FS) error {
 		prefix, _, _ := strings.Cut(e.Name(), "_")
 		id, err := strconv.ParseInt(prefix, 10, 64)
 		if err != nil {
-			return hb.Errf(500, "migration: bad file name %q, want \"<number>_<desc>.sql\"", e.Name())
+			return fmt.Errorf("migration: bad file name %q, want \"<number>_<desc>.sql\"", e.Name())
 		}
 		if prev, dup := seen[id]; dup {
-			return hb.Errf(500, "migration: duplicate number %d in %q and %q", id, prev, e.Name())
+			return fmt.Errorf("migration: duplicate number %d in %q and %q", id, prev, e.Name())
 		}
 		seen[id] = e.Name()
 		data, err := fs.ReadFile(fsys, e.Name())
 		if err != nil {
-			return hb.Internal(err)
+			return err
 		}
 		sum := sha256.Sum256(data)
 		pending = append(pending, mig{id: id, name: e.Name(), sql: data, sum: sum[:]})
@@ -189,19 +193,19 @@ func Migrate(cfg Config, pool *sql.DB, fsys fs.FS) error {
 	applied := map[int64]bool{}
 	rows, err := exec.QueryContext(context.Background(), `SELECT id FROM hb_migrations`)
 	if err != nil {
-		return hb.Internal(err)
+		return err
 	}
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return hb.Internal(err)
+			return err
 		}
 		applied[id] = true
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return hb.Internal(err)
+		return err
 	}
 
 	for _, m := range pending {
@@ -212,19 +216,19 @@ func Migrate(cfg Config, pool *sql.DB, fsys fs.FS) error {
 		ctx := context.Background()
 		tx, err := exec.BeginTx(ctx, nil)
 		if err != nil {
-			return hb.Internal(err)
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, string(m.sql)); err != nil {
 			_ = tx.Rollback()
-			return hb.Internal(fmt.Errorf("migration %s: %w", m.name, err))
+			return fmt.Errorf("migration %s: %w", m.name, err)
 		}
 		if _, err := tx.ExecContext(ctx, d.insert,
 			m.id, m.name, m.sum, time.Since(start).Milliseconds()); err != nil {
 			_ = tx.Rollback()
-			return hb.Internal(err)
+			return err
 		}
 		if err := tx.Commit(); err != nil {
-			return hb.Internal(err)
+			return err
 		}
 		slog.Info("migration applied", "file", m.name)
 	}

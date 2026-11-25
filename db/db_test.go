@@ -38,6 +38,18 @@ func TestConnectValidation(t *testing.T) {
 	}
 }
 
+func TestInvalidPGURL(t *testing.T) {
+	cfg := Config{Driver: "pg", URL: "postgres://user:fake-secret@127.0.0.1:badport/db"}
+	// 解析 DSN 就失败,还没轮到拨号;错误里不能出现连接串
+	pool, err := Connect(cfg)
+	if pool != nil || err == nil || err.Error() != "db config: invalid pg url" {
+		t.Fatalf("Connect(%+v) = %v, %v; want nil pool and a redacted invalid pg url error", cfg, pool, err)
+	}
+	if err := Migrate(cfg, nil, nil); err == nil || err.Error() != "db config: invalid pg url" {
+		t.Fatalf("Migrate(%+v) = %v; want redacted invalid pg url error", cfg, err)
+	}
+}
+
 func TestMigrateIdempotent(t *testing.T) {
 	pool := sqlitePool(t)
 	files := fstest.MapFS{

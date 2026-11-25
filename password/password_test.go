@@ -3,12 +3,10 @@ package password_test
 import (
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/password"
 
 	"golang.org/x/crypto/argon2"
@@ -118,8 +116,7 @@ func TestVerifyNeverPanics(t *testing.T) {
 
 func TestUnknownAlgorithm(t *testing.T) {
 	_, err := password.HashWith("hunter2", "md5")
-	var e *hb.Error
-	if err == nil || !errors.As(err, &e) || e.Code != 500 {
+	if err == nil || err.Error() != "crypto: unknown algorithm" {
 		t.Fatalf("unknown alg: %v", err)
 	}
 }

@@ -10,24 +10,20 @@ import (
 	"github.com/cai-zl/hb-go/redis"
 )
 
-func msgOf(t *testing.T, err error) string {
-	t.Helper()
-	var e *hb.Error
-	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hb.Error, got %v", err)
-	}
-	return e.Message
-}
-
 func TestConnectRejectsEmptyURL(t *testing.T) {
-	if _, err := redis.Connect(redis.Config{}); err == nil || !strings.Contains(msgOf(t, err), "url is required") {
-		t.Fatalf("err = %v, want url required", err)
+	client, err := redis.Connect(redis.Config{})
+	var e *hb.Error
+	if client != nil || err == nil || err.Error() != "redis config: url is required" || errors.As(err, &e) {
+		t.Fatalf("Connect(Config{}) = %v, %v; want nil client and a plain url-required error", client, err)
 	}
 }
 
 func TestConnectRejectsBadURL(t *testing.T) {
-	if _, err := redis.Connect(redis.Config{URL: "http://nope"}); err == nil {
-		t.Fatal("want parse failure for non-redis scheme")
+	for _, raw := range []string{"http://nope", "redis://user:fake-secret@127.0.0.1:badport/0"} {
+		client, err := redis.Connect(redis.Config{URL: raw})
+		if client != nil || err == nil || err.Error() != "redis config: invalid url" || strings.Contains(err.Error(), "fake-secret") {
+			t.Fatalf("Connect(%q) = %v, %v; want nil client and a redacted invalid-url error", raw, client, err)
+		}
 	}
 }
 

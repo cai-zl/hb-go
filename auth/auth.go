@@ -8,7 +8,8 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -104,7 +105,7 @@ func newToken() string { return crypto.RandomHex(32) }
 func recordJSON(data json.RawMessage, peer string, exp int64) (string, error) {
 	rec, err := json.Marshal(SessionRecord{Data: data, Peer: peer, Exp: exp})
 	if err != nil {
-		return "", hb.Internal(err)
+		return "", err
 	}
 	return string(rec), nil
 }
@@ -112,7 +113,7 @@ func recordJSON(data json.RawMessage, peer string, exp int64) (string, error) {
 func parseRecord(raw string) (SessionRecord, error) {
 	var rec SessionRecord
 	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-		return rec, hb.Errf(500, "auth: session record corrupted: %v", err)
+		return rec, fmt.Errorf("auth: session record corrupted: %w", err)
 	}
 	return rec, nil
 }
@@ -121,7 +122,7 @@ func parseRecord(raw string) (SessionRecord, error) {
 func (s *Sessions) Create(data any) (TokenPair, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
-		return TokenPair{}, hb.Internal(err)
+		return TokenPair{}, err
 	}
 	at, rt := newToken(), newToken()
 	exp := time.Now().Add(s.tokenTTL).Unix()
@@ -135,10 +136,10 @@ func (s *Sessions) Create(data any) (TokenPair, error) {
 	}
 	ctx := context.Background()
 	if err := s.client.Set(ctx, s.atKey(at), recAT, s.refreshTTL).Err(); err != nil {
-		return TokenPair{}, hb.Internal(err)
+		return TokenPair{}, err
 	}
 	if err := s.client.Set(ctx, s.rtKey(rt), recRT, s.refreshTTL).Err(); err != nil {
-		return TokenPair{}, hb.Internal(err)
+		return TokenPair{}, err
 	}
 	return TokenPair{AccessToken: at, RefreshToken: rt}, nil
 }
@@ -151,7 +152,7 @@ func (s *Sessions) Get(token string) (SessionRecord, bool, error) {
 		return SessionRecord{}, false, nil
 	}
 	if gerr != nil {
-		return SessionRecord{}, false, hb.Internal(gerr)
+		return SessionRecord{}, false, gerr
 	}
 	rec, err := parseRecord(raw)
 	if err != nil {
@@ -172,7 +173,7 @@ func (s *Sessions) Refresh(refreshToken string) (TokenPair, bool, error) {
 		return TokenPair{}, false, nil
 	}
 	if gerr != nil {
-		return TokenPair{}, false, hb.Internal(gerr)
+		return TokenPair{}, false, gerr
 	}
 	rec, err := parseRecord(raw)
 	if err != nil {
@@ -190,14 +191,14 @@ func (s *Sessions) Refresh(refreshToken string) (TokenPair, bool, error) {
 	}
 	ctx := context.Background()
 	if err := s.client.Set(ctx, s.atKey(at), recAT, s.refreshTTL).Err(); err != nil {
-		return TokenPair{}, false, hb.Internal(err)
+		return TokenPair{}, false, err
 	}
 	if err := s.client.Set(ctx, s.rtKey(rt), recRT, s.refreshTTL).Err(); err != nil {
-		return TokenPair{}, false, hb.Internal(err)
+		return TokenPair{}, false, err
 	}
 	// 旧 access = r: 记录里的 peer;旧 refresh = 当前键
 	if err := s.client.Del(ctx, s.atKey(rec.Peer), rk).Err(); err != nil {
-		return TokenPair{}, false, hb.Internal(err)
+		return TokenPair{}, false, err
 	}
 	return TokenPair{AccessToken: at, RefreshToken: rt}, true, nil
 }
@@ -209,7 +210,7 @@ func (s *Sessions) Revoke(accessToken string) (bool, error) {
 		return false, nil
 	}
 	if gerr != nil {
-		return false, hb.Internal(gerr)
+		return false, gerr
 	}
 	rec, err := parseRecord(raw)
 	if err != nil {
@@ -221,7 +222,7 @@ func (s *Sessions) Revoke(accessToken string) (bool, error) {
 		keys = append(keys, s.rtKey(rec.Peer))
 	}
 	if err := s.client.Del(ctx, keys...).Err(); err != nil {
-		return false, hb.Internal(err)
+		return false, err
 	}
 	return true, nil
 }
@@ -234,11 +235,11 @@ func (s *Sessions) Touch(accessToken string) (bool, error) {
 	}
 	ctx := context.Background()
 	if err := s.client.Expire(ctx, s.atKey(accessToken), s.refreshTTL).Err(); err != nil {
-		return false, hb.Internal(err)
+		return false, err
 	}
 	if rec.Peer != "" {
 		if err := s.client.Expire(ctx, s.rtKey(rec.Peer), s.refreshTTL).Err(); err != nil {
-			return false, hb.Internal(err)
+			return false, err
 		}
 	}
 	return true, nil
@@ -275,12 +276,9 @@ func Guard(sessions *Sessions) gin.HandlerFunc {
 		}
 		rec, ok, err := sessions.Get(token)
 		if err != nil {
-			// Redis 故障等基础设施错误:保留 500 信封,不冒充 401
-			var e *hb.Error
-			if !errors.As(err, &e) {
-				e = &hb.Error{Code: 500, Message: "internal error"}
-			}
-			hb.Write(c, http.StatusOK, hb.Envelope{Code: e.Code, Message: e.Message})
+			// Redis 故障等基础设施错误:原文只进日志,对外统一 500 信封,不冒充 401
+			slog.Warn("internal error", "err", err)
+			hb.Write(c, http.StatusOK, hb.Envelope{Code: 500, Message: "internal error"})
 			c.Abort()
 			return
 		}

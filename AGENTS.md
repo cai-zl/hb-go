@@ -71,10 +71,11 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 ### Errors and responses (`hb.go` is the contract)
 
 - Business handlers own queries, validation and authorization. Use the project's shared response and error handling; for custom responses, use Gin (e.g. `c.Data(…)`) and return after writing.
-- Caller-visible errors: `hb.Err(code, msg)` / `hb.Errf(code, fmt, args...)`; code `0` is normalized to `500`. Infrastructure failures: `hb.Internal(err)`, which masks the message, keeps the cause for `errors.As`/`Unwrap` and logs it.
-- Return `error`, never `*hb.Error` (typed-nil pitfall; see the comment on `crypto.gcmFor`).
-- Config problems: `hb.Err(500, "<pkg> config: … is required")`; TOML parse errors are prefixed `config: `.
-- The only sentinel is `s3.ErrNotFound` (`errors.Is`). Elsewhere inspect with `var e *hb.Error; errors.As(err, &e)`.
+- HTTP boundary only: `hb.Err(code, msg)` / `hb.Errf(code, fmt, args...)` build errors meant for an HTTP client (code `0` is normalized to `500`); `hb.Internal(err)` logs and masks an unknown error for the response and keeps the cause for `errors.As`/`Unwrap`.
+- Config, startup, connect and other non-HTTP code (`boot`, `db`, `redis`, `s3`, `nacos`, `auth.Sessions`, `crypto`, `password`, `ws.Upgrade`) returns plain Go `error`s (`errors.New` / `fmt.Errorf` with `%w`) without logging them; the HTTP layer that consumes the error logs and masks it (`auth.Guard`, `internal/api.writeAuthRouteError`).
+- Return `error`, never `*hb.Error` (typed-nil pitfall).
+- Config problems: `errors.New("<pkg> config: … is required")`; TOML parse errors are `fmt.Errorf("config: %w", err)`. Connection strings and credentials never appear in error text (`redis config: invalid url`, `db config: invalid pg url`, `s3 config: failed to initialize client`).
+- The only sentinel is `s3.ErrNotFound` (`errors.Is`; a plain `error`, a handler that wants a 404 maps it to `hb.Err(404, …)` itself). `*hb.Error` is inspected with `var e *hb.Error; errors.As(err, &e)` only at the HTTP boundary.
 - Auth semantics: wrong credentials → HTTP 200 + code 401; missing or invalid token → HTTP 401; a Redis failure stays code 500, never 401.
 - `hb.Recovery()` (panic → `500 internal error` envelope) is opt-in; `boot` does not install it.
 
@@ -112,7 +113,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 ### Contracts that must not drift
 
 - `crypto` output (`base64(nonce‖ciphertext‖tag)`, key = SHA-256 of the passphrase) and `password` formats and params (argon2id `m=19456,t=2,p=1`; bcrypt cost 12 normalized to `$2b$`; `$pbkdf2$600000$…`) are byte-compatible with Rust hb. `password/password_test.go` pins Rust-generated vectors (`rustVectors`). `password.Verify` never panics and returns `false` on junk input.
-- Password verification compares with `subtle.ConstantTimeCompare`; randomness comes from `crypto/rand`. `crypto.Decrypt` always reports `500 crypto: decrypt failed`.
+- Password verification compares with `subtle.ConstantTimeCompare`; randomness comes from `crypto/rand`. `crypto.Decrypt` always reports the plain error `crypto: decrypt failed`.
 - Persisted and protocol names: ledger table `hb_migrations`, Redis prefix `hb:auth:`, gin keys `hb.session`/`hb.token`, envelope JSON keys.
 - Migrations (`db.Migrate`): up-only, one transaction per file, `<number>_<desc>.sql`, SQL written in the chosen dialect and executed verbatim. Applied files are skipped **by number only**; checksums are stored but never compared. MySQL needs `multiStatements=true` in the DSN or `Migrate` fails.
 - WebSocket: `CheckOrigin` is always true by design (restrict Origin in business code). `ws.Message` has only `Conn` and `Data`: Text, Binary and Pong payloads arrive identically.
@@ -153,8 +154,8 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 - **Layout**: tests use an external `<pkg>_test` package by default. Internal tests include `boot/boot_internal_test.go` (`resolveLevel`) and `db/db_test.go` (registers the sqlite driver for tests only).
 - **Style**: no `t.Run`, `t.Parallel` or `testing.Short`; no mocks, interfaces or `testdata/`. Fixtures are inline: TOML string literals, `fstest.MapFS` migrations, Rust vectors, `httptest.NewRecorder` / `httptest.NewServer`, sqlite `:memory:` via `sqlitePool`.
 - **Names**: `Test<Unit><Behaviour>` without underscores (`TestErrZeroCodeIs500`, `TestMigrateFailureIsAtomic`); one end-to-end test per area (`TestAuthFlow`, `TestServeStandaloneLifecycle`).
-- **Assertions**: table cases as a plain loop with the case name folded into the message; `t.Fatalf("x = %v, want …")` for failures; errors checked with `errors.As` to `*hb.Error`, then `e.Message` / `e.Code`; JSON decoded to `map[string]any` (numbers are `float64`).
-- **Helpers**: unexported, first line `t.Helper()`, duplicated per package rather than shared (`get`, `mustParse`, `hbErr`, `msgOf`, `codeOf`, `do`, `freePort`, `waitFor`, `sqlitePool`). Use `t.Setenv`, `t.Cleanup` and `gin.SetMode(gin.TestMode)`. Reference tests to copy: `redis/redis_test.go` (unit), `db/db_test.go` (FS + DB), `ws/ws_test.go` (hub).
+- **Assertions**: table cases as a plain loop with the case name folded into the message; `t.Fatalf("x = %v, want …")` for failures; HTTP-boundary errors checked with `errors.As` to `*hb.Error`, then `e.Message` / `e.Code`; plain errors checked by exact `err.Error()` text, `errors.Is` or `errors.As` on the underlying type; JSON decoded to `map[string]any` (numbers are `float64`).
+- **Helpers**: unexported, first line `t.Helper()`, duplicated per package rather than shared (`get`, `mustParse`, `do`, `freePort`, `waitFor`, `sqlitePool`). Use `t.Setenv`, `t.Cleanup` and `gin.SetMode(gin.TestMode). Reference tests to copy: `redis/redis_test.go` (unit), `db/db_test.go` (FS + DB), `ws/ws_test.go` (hub).
 - **Integration tests** start with the env lookup and `t.Skip`, then connect. They touch real services, so point them at throwaway instances:
 
 | Env var | Tests | What it touches |

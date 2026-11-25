@@ -80,30 +80,20 @@ func TestParseConfigUnknownKeys(t *testing.T) {
 	}
 }
 
-func hbErr(t *testing.T, err error) *hb.Error {
-	t.Helper()
-	var e *hb.Error
-	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hb.Error, got %v", err)
-	}
-	return e
-}
-
 func TestParseConfigRequiresPort(t *testing.T) {
 	_, err := boot.ParseConfig("app_name = \"x\"")
-	if hbErr(t, err).Message != "boot config: port is required" {
+	if err == nil || err.Error() != "boot config: port is required" {
 		t.Fatalf("err = %v", err)
 	}
 	_, err = boot.ParseConfig("port = 99999")
-	if hbErr(t, err).Message != "boot config: port out of range: 99999" {
+	if err == nil || err.Error() != "boot config: port out of range: 99999" {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestParseConfigBadTOML(t *testing.T) {
 	_, err := boot.ParseConfig("port =")
-	msg := hbErr(t, err).Message
-	if len(msg) < 8 || msg[:8] != "config: " {
+	if err == nil || !strings.HasPrefix(err.Error(), "config: ") {
 		t.Fatalf("err = %v, want config: prefix", err)
 	}
 }
@@ -282,10 +272,10 @@ func TestServeStandaloneLifecycle(t *testing.T) {
 func TestHookFailurePreventsStart(t *testing.T) {
 	port := freePort(t)
 	cfg := mustParse(t, fmt.Sprintf("port = %d\nhost = \"127.0.0.1\"\nadvertise_ip = \"127.0.0.1\"\n", port))
-	boom := hb.Err(500, "hook boom")
+	boom := errors.New("hook boom")
 	err := boot.ServeWith(cfg, nil, boot.WithHook(func(app *boot.App) error { return boom }))
-	if hbErr(t, err).Message != "hook boom" {
-		t.Fatalf("err = %v", err)
+	if err != boom {
+		t.Fatalf("err = %v, want the hook error", err)
 	}
 }
 
@@ -294,8 +284,21 @@ func TestAuthRequiresRedis(t *testing.T) {
 	port := freePort(t)
 	cfg := mustParse(t, fmt.Sprintf("port = %d\nhost = \"127.0.0.1\"\nadvertise_ip = \"127.0.0.1\"\n[auth]\n", port))
 	err := boot.ServeWith(cfg, nil, boot.WithLogging(false))
-	if hbErr(t, err).Message != "boot config: [auth] requires a [redis] section" {
+	if err == nil || err.Error() != "boot config: [auth] requires a [redis] section" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestServeWithReturnsRedisConfigError(t *testing.T) {
+	// [redis] 段缺 url:依赖错误原样向上返回,不包装成 HTTP 信封
+	cfg := mustParse(t, "port = 1\nadvertise_ip = \"127.0.0.1\"\n[redis]\n")
+	err := boot.ServeWith(cfg, nil, boot.WithLogging(false), boot.WithHook(func(*boot.App) error {
+		t.Fatal("hook ran although the redis config is invalid")
+		return nil
+	}))
+	var e *hb.Error
+	if err == nil || err.Error() != "redis config: url is required" || errors.As(err, &e) {
+		t.Fatalf("ServeWith = %v; want plain redis config: url is required error", err)
 	}
 }
 
@@ -311,7 +314,7 @@ func TestWithAuthRequiresAuthConfig(t *testing.T) {
 		t.Fatal("mounted business routes without [auth]")
 	}}
 	err := boot.ServeWith(cfg, mounts, boot.WithAuth(unusedAuthChecker{}), boot.WithLogging(false))
-	if hbErr(t, err).Message != "boot config: WithAuth requires an [auth] section" {
+	if err == nil || err.Error() != "boot config: WithAuth requires an [auth] section" {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -320,7 +323,7 @@ func TestWithAuthRequiresAuthConfig(t *testing.T) {
 func TestServeRequiresNacosEnv(t *testing.T) {
 	t.Setenv("NACOS_SERVER_ADDR", "")
 	err := boot.Serve(nil)
-	if hbErr(t, err).Message != "missing env: NACOS_SERVER_ADDR" {
+	if err == nil || err.Error() != "missing env: NACOS_SERVER_ADDR" {
 		t.Fatalf("err = %v", err)
 	}
 	_ = os.Unsetenv("NACOS_SERVER_ADDR")

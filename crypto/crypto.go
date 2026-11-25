@@ -12,8 +12,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
-
-	"github.com/cai-zl/hb-go"
 )
 
 // SHA256 返回 64 字符小写 hex。
@@ -46,7 +44,7 @@ func deriveKey(key string) []byte {
 func Encrypt(key string, plaintext []byte) (string, error) {
 	gcm, err := gcmFor(key)
 	if err != nil {
-		return "", hb.Internal(err)
+		return "", err
 	}
 	nonce := make([]byte, gcm.NonceSize())
 	_, _ = rand.Read(nonce)
@@ -59,7 +57,7 @@ func Encrypt(key string, plaintext []byte) (string, error) {
 func Decrypt(key, encoded string) ([]byte, error) {
 	fail := func(err error) ([]byte, error) {
 		slog.Debug("decrypt failed", "err", err)
-		return nil, hb.Err(500, "crypto: decrypt failed")
+		return nil, errors.New("crypto: decrypt failed")
 	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
@@ -67,7 +65,6 @@ func Decrypt(key, encoded string) ([]byte, error) {
 	}
 	gcm, err := gcmFor(key)
 	if err != nil {
-		slog.Debug("aes init failed", "err", err)
 		return fail(err)
 	}
 	if len(raw) < gcm.NonceSize()+gcm.Overhead() {
@@ -80,8 +77,6 @@ func Decrypt(key, encoded string) ([]byte, error) {
 	return out, nil
 }
 
-// 返回纯 error 而非 *hb.Error:typed-nil 具体类型装进接口后 err != nil 恒真,
-// 会把每次成功路径误判为失败。
 func gcmFor(key string) (cipher.AEAD, error) {
 	block, err := aes.NewCipher(deriveKey(key))
 	if err != nil {

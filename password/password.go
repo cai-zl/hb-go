@@ -9,14 +9,13 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
-
-	"github.com/cai-zl/hb-go"
 )
 
 // HashAlg 是密码哈希算法标识。
@@ -65,7 +64,7 @@ func HashWith(plain string, alg HashAlg) (string, error) {
 	case AlgBcrypt:
 		h, err := bcrypt.GenerateFromPassword([]byte(plain), bcryptCost)
 		if err != nil {
-			return "", hb.Internal(err)
+			return "", err
 		}
 		s := string(h)
 		if strings.HasPrefix(s, "$2a$") {
@@ -76,11 +75,11 @@ func HashWith(plain string, alg HashAlg) (string, error) {
 		salt := randomBytes(pbkdf2SaltLen)
 		dk, err := pbkdf2.Key(sha256.New, plain, salt, pbkdf2Iterations, pbkdf2KeyLen)
 		if err != nil {
-			return "", hb.Internal(err)
+			return "", err
 		}
 		return fmt.Sprintf("$pbkdf2$%d$%s$%s", pbkdf2Iterations, hex.EncodeToString(salt), hex.EncodeToString(dk)), nil
 	default:
-		return "", hb.Err(500, "crypto: unknown algorithm")
+		return "", errors.New("crypto: unknown algorithm")
 	}
 }
 

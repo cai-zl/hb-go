@@ -1,27 +1,16 @@
 package nacos_test
 
 import (
-	"errors"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/nacos"
 )
 
-func msgOf(t *testing.T, err error) string {
-	t.Helper()
-	var e *hb.Error
-	if err == nil || !errors.As(err, &e) {
-		t.Fatalf("want *hb.Error, got %v", err)
-	}
-	return e.Message
-}
-
 func TestFromEnvRequiresServerAddr(t *testing.T) {
 	t.Setenv("NACOS_SERVER_ADDR", "")
-	if _, err := nacos.FromEnv(); err == nil || !strings.Contains(msgOf(t, err), "missing env: NACOS_SERVER_ADDR") {
+	if _, err := nacos.FromEnv(); err == nil || !strings.Contains(err.Error(), "missing env: NACOS_SERVER_ADDR") {
 		t.Fatalf("err = %v, want missing env", err)
 	}
 }
@@ -79,13 +68,13 @@ func TestParseConfigTOML(t *testing.T) {
 	// 坏 TOML → config: 前缀错误
 	var bad appCfg
 	err := nacos.ParseConfig("name = ", &bad)
-	if err == nil || !strings.HasPrefix(err.Error(), "500 config: ") {
+	if err == nil || !strings.HasPrefix(err.Error(), "config: ") {
 		t.Fatalf("err = %v, want config: prefix", err)
 	}
 }
 
 func TestConnectValidatesAddr(t *testing.T) {
-	if _, err := nacos.Connect("", "public"); err == nil || !strings.Contains(msgOf(t, err), "server addr is required") {
+	if _, err := nacos.Connect("", "public"); err == nil || !strings.Contains(err.Error(), "server addr is required") {
 		t.Fatalf("err = %v, want required", err)
 	}
 	// shortcut: SDK 客户端创建是惰性的,不拨号;连通性由 TEST_NACOS_ADDR 集成测试覆盖
