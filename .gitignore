@@ -54,6 +54,7 @@ html-cover*
 
 # ---- IDE / OS ----
 .idea/
+.openidea/
 .vscode/
 *.swp
 .DS_Store
