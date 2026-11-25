@@ -1,0 +1,231 @@
+package auth_test
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/cai-zl/hb-go"
+	"github.com/cai-zl/hb-go/auth"
+	"github.com/cai-zl/hb-go/internal/bootonly"
+	"github.com/cai-zl/hb-go/redis"
+)
+
+type sessionData struct {
+	UID   int    `json:"uid"`
+	Role  string `json:"role"`
+	Extra string `json:"extra"`
+}
+
+type testAuthChecker struct{}
+
+func (testAuthChecker) Check(req auth.LoginReq) (json.RawMessage, error) {
+	if req.Username == "alice" && req.Password == "wonderland" {
+		return json.Marshal(sessionData{UID: 7, Role: "admin", Extra: "x"})
+	}
+	return nil, hb.Err(401, "invalid username or password")
+}
+
+type authCheckFunc func(auth.LoginReq) (json.RawMessage, error)
+
+func (f authCheckFunc) Check(req auth.LoginReq) (json.RawMessage, error) { return f(req) }
+
+func newEngine(t *testing.T, sessions *auth.Sessions, check auth.AuthChecker) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	auth.MountRoutes(bootonly.AuthRoutes{}, &r.RouterGroup, sessions, check)
+	return r
+}
+
+// 用 RawMessage 区分 data 字段缺失与 JSON null。
+type authRouteResponse struct {
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
+}
+
+func do(t *testing.T, r http.Handler, method, path, authorization, body string) (int, authRouteResponse) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var env authRouteResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("%s %s: HTTP %d, expected JSON envelope: %v", method, path, w.Code, err)
+	}
+	return w.Code, env
+}
+
+func TestBearerThreeStates(t *testing.T) {
+	r := newEngine(t, nil, testAuthChecker{})
+	for _, header := range []string{"", "Basic abc", "Bearer "} {
+		status, env := do(t, r, "GET", "/auth/me", header, "")
+		if status != 401 || env.Code != 401 || env.Message != "unauthorized" || env.Data != nil {
+			t.Fatalf("Authorization %q: HTTP %d, %+v; want 401 unauthorized without data", header, status, env)
+		}
+	}
+}
+
+func TestAuthMalformedBodies(t *testing.T) {
+	check := authCheckFunc(func(auth.LoginReq) (json.RawMessage, error) {
+		t.Fatal("checker called for malformed JSON")
+		return nil, nil
+	})
+	r := newEngine(t, nil, check)
+	for _, path := range []string{"/auth/token", "/auth/refresh", "/auth/revoke"} {
+		status, env := do(t, r, "POST", path, "", "{oops")
+		if status != 200 || env.Code != 400 || env.Message != "invalid request body" || env.Data != nil {
+			t.Fatalf("POST %s: HTTP %d, %+v; want HTTP 200, code 400, invalid request body without data", path, status, env)
+		}
+	}
+}
+
+func TestLoginCheckErrors(t *testing.T) {
+	const input = `{"username":"alice","password":"wrong"}`
+	for _, tc := range []struct {
+		name    string
+		err     error
+		code    int
+		message string
+	}{
+		{"wrapped business error", fmt.Errorf("check: %w", hb.Err(401, "invalid username or password")), 401, "invalid username or password"},
+		{"zero code", &hb.Error{Code: 0, Message: "check failed"}, 500, "check failed"},
+		{"unknown error", errors.New("backing store refused connection"), 500, "internal error"},
+	} {
+		check := authCheckFunc(func(req auth.LoginReq) (json.RawMessage, error) {
+			if req.Username != "alice" || req.Password != "wrong" {
+				t.Fatal("checker did not receive bound credentials")
+			}
+			return nil, tc.err
+		})
+		r := newEngine(t, nil, check)
+		status, env := do(t, r, "POST", "/auth/token", "", input)
+		if status != 200 || env.Code != tc.code || env.Message != tc.message || env.Data != nil {
+			t.Fatalf("%s: HTTP %d, %+v; want HTTP 200, code %d, %q without data", tc.name, status, env, tc.code, tc.message)
+		}
+	}
+}
+
+func TestLoginRejectsInvalidSessionJSON(t *testing.T) {
+	check := authCheckFunc(func(auth.LoginReq) (json.RawMessage, error) { return json.RawMessage("{"), nil })
+	r := newEngine(t, auth.NewSessions(nil, auth.Config{}), check)
+	status, env := do(t, r, "POST", "/auth/token", "", `{"username":"alice","password":"wonderland"}`)
+	if status != 200 || env.Code != 500 || env.Message != "internal error" || env.Data != nil {
+		t.Fatalf("invalid session JSON: HTTP %d, %+v; want HTTP 200, code 500, internal error without data", status, env)
+	}
+}
+
+func requireTokenResponse(t *testing.T, status int, env authRouteResponse, sessions *auth.Sessions) auth.TokenResponse {
+	t.Helper()
+	var tokens auth.TokenResponse
+	if status != 200 || env.Code != 0 || env.Message != "ok" || json.Unmarshal(env.Data, &tokens) != nil ||
+		tokens.TokenType != "Bearer" || tokens.ExpiresIn != int64(sessions.AccessTTL().Seconds()) ||
+		len(tokens.AccessToken) != 64 || len(tokens.RefreshToken) != 64 {
+		t.Fatalf("want HTTP 200, code 0, ok, and OAuth2 snake_case tokens; got HTTP %d, code %d, message %q, data %s", status, env.Code, env.Message, env.Data)
+	}
+	return tokens
+}
+
+func TestAuthFlow(t *testing.T) {
+	url := os.Getenv("TEST_REDIS_URL")
+	if url == "" {
+		t.Skip("TEST_REDIS_URL not set; skipping integration test")
+	}
+	client, err := redis.Connect(redis.Config{URL: url})
+	if err != nil {
+		t.Fatalf("redis connect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	sessions := auth.NewSessions(client, auth.Config{})
+	r := newEngine(t, sessions, testAuthChecker{})
+	r.GET("/private/who", auth.Guard(sessions), func(c *gin.Context) {
+		data, err := auth.From[sessionData](c)
+		if err != nil {
+			t.Fatalf("auth.From: %v", err)
+		}
+		hb.Write(c, http.StatusOK, hb.Envelope{Code: 0, Message: "ok", Data: data})
+	})
+
+	status, env := do(t, r, "POST", "/auth/token", "", `{"username":"alice","password":"wrong"}`)
+	if status != 200 || env.Code != 401 || env.Message != "invalid username or password" || env.Data != nil {
+		t.Fatalf("wrong password: HTTP %d, %+v; want HTTP 200, code 401 without data", status, env)
+	}
+	login := func() auth.TokenResponse {
+		status, env := do(t, r, "POST", "/auth/token", "", `{"username":"alice","password":"wonderland"}`)
+		tokens := requireTokenResponse(t, status, env, sessions)
+		t.Cleanup(func() { _, _ = sessions.Revoke(tokens.AccessToken) })
+		return tokens
+	}
+	tokens := login()
+	other := login()
+	if tokens.AccessToken == other.AccessToken || tokens.RefreshToken == other.RefreshToken {
+		t.Fatal("tokens should differ across logins")
+	}
+
+	const wantData = `{"uid":7,"role":"admin","extra":"x"}`
+	for _, path := range []string{"/auth/me", "/private/who"} {
+		status, env = do(t, r, "GET", path, "Bearer "+tokens.AccessToken, "")
+		if status != 200 || env.Code != 0 || env.Message != "ok" || string(env.Data) != wantData {
+			t.Fatalf("GET %s: HTTP %d, code %d, message %q, data %s; want session object %s", path, status, env.Code, env.Message, env.Data, wantData)
+		}
+	}
+	if status, _ = do(t, r, "GET", "/private/who", "Bearer garbage-token", ""); status != 401 {
+		t.Fatalf("Guard with invalid token: HTTP %d, want 401", status)
+	}
+
+	body, _ := json.Marshal(auth.RefreshReq{RefreshToken: tokens.RefreshToken})
+	status, env = do(t, r, "POST", "/auth/refresh", "", string(body))
+	fresh := requireTokenResponse(t, status, env, sessions)
+	t.Cleanup(func() { _, _ = sessions.Revoke(fresh.AccessToken) })
+	if fresh.AccessToken == tokens.AccessToken || fresh.RefreshToken == tokens.RefreshToken {
+		t.Fatal("refresh must rotate both tokens")
+	}
+	if status, _ = do(t, r, "GET", "/auth/me", "Bearer "+tokens.AccessToken, ""); status != 401 {
+		t.Fatalf("old access after refresh: HTTP %d, want 401", status)
+	}
+	status, env = do(t, r, "GET", "/auth/me", "Bearer "+fresh.AccessToken, "")
+	if status != 200 || env.Code != 0 || env.Message != "ok" || string(env.Data) != wantData {
+		t.Fatalf("rotated session: HTTP %d, code %d, message %q, data %s; want %s", status, env.Code, env.Message, env.Data, wantData)
+	}
+	status, env = do(t, r, "POST", "/auth/refresh", "", string(body))
+	if status != 200 || env.Code != 401 || env.Message != "invalid refresh token" || env.Data != nil {
+		t.Fatalf("old refresh token: HTTP %d, %+v; want HTTP 200, code 401, invalid refresh token without data", status, env)
+	}
+
+	body, _ = json.Marshal(auth.RevokeReq{AccessToken: fresh.AccessToken})
+	for i := range 2 {
+		status, env = do(t, r, "POST", "/auth/revoke", "", string(body))
+		if status != 200 || env.Code != 0 || env.Message != "ok" || env.Data != nil {
+			t.Fatalf("revoke #%d: HTTP %d, %+v; want HTTP 200, code 0, ok without data", i+1, status, env)
+		}
+	}
+	if status, _ = do(t, r, "GET", "/auth/me", "Bearer "+fresh.AccessToken, ""); status != 401 {
+		t.Fatalf("revoked access: HTTP %d, want 401", status)
+	}
+	body, _ = json.Marshal(auth.RefreshReq{RefreshToken: fresh.RefreshToken})
+	status, env = do(t, r, "POST", "/auth/refresh", "", string(body))
+	if status != 200 || env.Code != 401 || env.Message != "invalid refresh token" || env.Data != nil {
+		t.Fatalf("revoked refresh token: HTTP %d, %+v; want HTTP 200, code 401, invalid refresh token without data", status, env)
+	}
+
+	if ok, err := sessions.Touch(other.AccessToken); err != nil || !ok {
+		t.Fatalf("touch: %v %v", ok, err)
+	}
+	if status, _ = do(t, r, "GET", "/auth/me", "Bearer "+other.AccessToken, ""); status != 200 {
+		t.Fatalf("touched token: HTTP %d, want 200", status)
+	}
+}

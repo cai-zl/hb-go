@@ -33,6 +33,7 @@ import (
 	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/auth"
 	"github.com/cai-zl/hb-go/db"
+	"github.com/cai-zl/hb-go/internal/bootonly"
 	"github.com/cai-zl/hb-go/nacos"
 	hbredis "github.com/cai-zl/hb-go/redis"
 	"github.com/cai-zl/hb-go/s3"
@@ -281,16 +282,17 @@ type wsRoute struct {
 
 // Boot 一次启动的全部选项。
 type Boot struct {
-	mounts   []Mount
-	migrator fs.FS
-	hooks    []Hook
-	logging  bool
-	nacos    *nacos.Nacos
-	wsRoutes []wsRoute
-	onClose  func(id string)
+	mounts    []Mount
+	migrator  fs.FS
+	hooks     []Hook
+	logging   bool
+	nacos     *nacos.Nacos
+	authCheck auth.AuthChecker
+	wsRoutes  []wsRoute
+	onClose   func(id string)
 }
 
-// Option 函数式选项(WithMigrator/WithHook/WithWS/WithWSClose/WithLogging/WithNacos)。
+// Option 函数式选项(WithMigrator/WithHook/WithAuth/WithWS/WithWSClose/WithLogging/WithNacos)。
 type Option func(*Boot)
 
 // WithMigrator 挂接内嵌迁移(业务仓库 //go:embed migrations/*.sql 后传入),
@@ -303,6 +305,10 @@ func WithLogging(enabled bool) Option { return func(b *Boot) { b.logging = enabl
 
 // WithHook 追加启动钩子,可多次调用,按调用顺序执行。
 func WithHook(h Hook) Option { return func(b *Boot) { b.hooks = append(b.hooks, h) } }
+
+// WithAuth 让 boot 自动挂载四个 /auth/* 端点,需要配置 [auth] 和 [redis]。
+// 业务只负责校验登录凭据并返回已编码的会话 JSON。多次调用时后者覆盖前者。
+func WithAuth(check auth.AuthChecker) Option { return func(b *Boot) { b.authCheck = check } }
 
 // WithWS 挂一个 WebSocket 端点,可多次调用。消息回调收 Conn(握手期采集的
 // IP/请求头)与客户端消息,按到达顺序保序执行。
@@ -372,6 +378,10 @@ type hotReload struct {
 }
 
 func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
+	if b.authCheck != nil && cfg.Auth == nil {
+		return hb.Err(500, "boot config: WithAuth requires an [auth] section")
+	}
+
 	var applyLog func(string)
 	if b.logging {
 		applyLog = initLogging(resolveLevel(cfg))
@@ -436,8 +446,11 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 		}
 	}
 
-	// 路由:hb.New 预装 404/405 框架信封;业务挂载 + WS 端点 + 健康检查
+	// 路由:hb.New 预装 404/405 框架信封;auth 端点 + 业务挂载 + WS 端点 + 健康检查
 	e := hb.New()
+	if b.authCheck != nil {
+		auth.MountRoutes(bootonly.AuthRoutes{}, &e.RouterGroup, app.Sessions, b.authCheck)
+	}
 	for _, m := range b.mounts {
 		m(app, &e.RouterGroup)
 	}

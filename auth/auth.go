@@ -1,5 +1,5 @@
 // Package auth 提供会话认证:不透明 token + Redis 存储(复用 redis 与 crypto),
-// 登录/刷新/吊销/个人信息四端点与整组保护中间件。
+// 业务登录凭据校验接口与整组保护中间件。
 //
 // 语义约定(与 Rust 版一致):登录凭据错误 = HTTP 200 + {"code":401,...} 业务信封;
 // token 缺失/失效 = HTTP 401 + 信封;Redis 等基础设施故障保留 500 信封,不冒充 401。
@@ -48,10 +48,15 @@ type TokenResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
-// LoginReq 登录请求体;check 闭包在 /auth/token 时收到它。
+// LoginReq 登录请求体;AuthChecker 在 /auth/token 时收到它。
 type LoginReq struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+// AuthChecker 校验登录凭据,返回已编码的合法会话 JSON 或错误。
+type AuthChecker interface {
+	Check(LoginReq) (json.RawMessage, error)
 }
 
 // SessionRecord Redis 里的一条会话记录。两个键互存对方(peer),
@@ -325,81 +330,4 @@ type RefreshReq struct {
 
 type RevokeReq struct {
 	AccessToken string `json:"access_token"`
-}
-
-func tokenResponse(pair TokenPair, sessions *Sessions) TokenResponse {
-	return TokenResponse{
-		AccessToken:  pair.AccessToken,
-		RefreshToken: pair.RefreshToken,
-		TokenType:    "Bearer",
-		ExpiresIn:    int64(sessions.AccessTTL().Seconds()),
-	}
-}
-
-// Routes 挂载四端点:POST /auth/token|refresh|revoke、GET /auth/me。
-// check 是业务唯一要写的东西 —— 仅在登录瞬间被调用:查库验密码后返回会话数据,
-// 返回错误时原样透传成 200+业务码信封(凭据错误语义)。
-func Routes(sessions *Sessions, check func(LoginReq) (any, error)) func(*gin.RouterGroup) {
-	return func(rg *gin.RouterGroup) {
-		rg.POST("/auth/token", hb.Wrap(func(c *gin.Context) (any, error) {
-			var req LoginReq
-			if err := c.ShouldBindJSON(&req); err != nil {
-				return nil, hb.Err(400, "invalid request body")
-			}
-			data, err := check(req)
-			if err != nil {
-				return nil, err
-			}
-			pair, err := sessions.Create(data)
-			if err != nil {
-				return nil, err
-			}
-			return tokenResponse(pair, sessions), nil
-		}))
-		rg.POST("/auth/refresh", hb.Wrap(func(c *gin.Context) (any, error) {
-			var req RefreshReq
-			if err := c.ShouldBindJSON(&req); err != nil {
-				return nil, hb.Err(400, "invalid request body")
-			}
-			pair, ok, err := sessions.Refresh(req.RefreshToken)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				return nil, hb.Err(401, "invalid refresh token")
-			}
-			return tokenResponse(pair, sessions), nil
-		}))
-		rg.POST("/auth/revoke", hb.Wrap(func(c *gin.Context) (any, error) {
-			var req RevokeReq
-			if err := c.ShouldBindJSON(&req); err != nil {
-				return nil, hb.Err(400, "invalid request body")
-			}
-			if _, err := sessions.Revoke(req.AccessToken); err != nil {
-				return nil, err
-			}
-			return nil, nil // 空成功信封
-		}))
-		rg.GET("/auth/me", func(c *gin.Context) {
-			token := bearer(c.Request.Header.Get("Authorization"))
-			if token == "" {
-				unauthorized(c, "unauthorized")
-				return
-			}
-			rec, ok, err := sessions.Get(token)
-			if err != nil {
-				var e *hb.Error
-				if !errors.As(err, &e) {
-					e = &hb.Error{Code: 500, Message: "internal error"}
-				}
-				hb.Write(c, http.StatusOK, hb.Envelope{Code: e.Code, Message: e.Message})
-				return
-			}
-			if !ok {
-				unauthorized(c, "unauthorized")
-				return
-			}
-			hb.Write(c, http.StatusOK, hb.Envelope{Code: 0, Message: "ok", Data: json.RawMessage(rec.Data)})
-		})
-	}
 }

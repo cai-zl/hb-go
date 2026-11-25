@@ -299,6 +299,23 @@ func TestAuthRequiresRedis(t *testing.T) {
 	}
 }
 
+type unusedAuthChecker struct{}
+
+func (unusedAuthChecker) Check(auth.LoginReq) (json.RawMessage, error) {
+	panic("checker called during startup")
+}
+
+func TestWithAuthRequiresAuthConfig(t *testing.T) {
+	cfg := mustParse(t, "port = 1\nadvertise_ip = \"127.0.0.1\"")
+	mounts := []boot.Mount{func(*boot.App, *gin.RouterGroup) {
+		t.Fatal("mounted business routes without [auth]")
+	}}
+	err := boot.ServeWith(cfg, mounts, boot.WithAuth(unusedAuthChecker{}), boot.WithLogging(false))
+	if hbErr(t, err).Message != "boot config: WithAuth requires an [auth] section" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // Serve(env 模式)缺 NACOS_SERVER_ADDR → 报错。
 func TestServeRequiresNacosEnv(t *testing.T) {
 	t.Setenv("NACOS_SERVER_ADDR", "")
