@@ -8,7 +8,7 @@ Go 生态风格的 HTTP 响应信封库 + 一键启动套件。业务路由直�
 {"code": 404, "message": "user not found"}         // 业务失败(HTTP 仍是 200)
 ```
 
-上例沿用 hb 的业务协议：常规成功和失败均为 HTTP 200，通过 `code` 表达业务结果。
+上例中，常规成功和业务失败均使用 HTTP 200，通过 `code` 表达业务结果。
 库内置鉴权、404/405、WS 握手和就绪端点保留各自的 HTTP 状态规则。
 
 ## 包一览
@@ -206,7 +206,7 @@ rate_limit = 100
 
 **旧版迁移：** 将 `hb.Wrap` 调用改成原生 `func(c *gin.Context)`。复用业务项目已有的统一响应和错误出口；没有时在项目 HTTP 层定义一处标准，不在每条 handler 重写。
 
-采用 hb 信封时，用 `hb.Write` / `hb.Envelope` 写响应，`hb.Page` 构造分页，`hb.Err` / `hb.Errf` 表达可公开的业务错误。沿用旧协议时，常规响应使用 HTTP 200，由 `code` 表达业务结果。未知错误先用 `hb.Internal` 掩码，只写识别出的 `*hb.Error.Code` / `.Message`，不把底层原因或凭据写给客户端。
+采用 hb 信封时，用 `hb.Write` / `hb.Envelope` 写响应，`hb.Page` 构造分页，`hb.Err` / `hb.Errf` 表达可公开的业务错误。若采用上例的状态码约定，常规响应使用 HTTP 200，由 `code` 表达业务结果。未知错误先用 `hb.Internal` 掩码，只写识别出的 `*hb.Error.Code` / `.Message`，不把底层原因或凭据写给客户端。
 
 配置、启动与依赖操作（`boot`、`db`、`redis`、`s3`、`nacos`、`auth.Sessions`、`crypto`、`password`、`ws`）返回普通 `error`，日志由消费错误的一方处理；非 HTTP 调用不使用 `hb.Err` / `hb.Errf` / `hb.Internal`，只有 HTTP 层才把错误变成可公开的信封。
 
@@ -440,8 +440,6 @@ ok := password.Verify("hunter2", h)           // 前缀分派;垃圾输入一律
 alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2-sha256"
 ```
 
-三算法互相兼容(可与 Rust hb 生成的哈希互通,已双向验证)。
-
 ## API 速查
 
 业务层只用下表 API,不要自写:信封/错误/分页、404/405/panic 兜底、启动/信号/停机/健康检查、
@@ -589,20 +587,5 @@ alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2
 | --- | --- |
 | `TEST_DATABASE_URL` | 迁移幂等/原子性/记账 |
 | `TEST_REDIS_URL` | 登录/轮换/吊销全流程 |
-| `TEST_S3_ENDPOINT`(含 BUCKET/ACCESS_KEY/SECRET_KEY) | 上传下载/404/预签名 |
+| `TEST_S3_ENDPOINT`(含 BUCKET/ACCESS_KEY/SECRET_KEY) | 上传下载/ErrNotFound/预签名 |
 | `TEST_NACOS_ADDR` | 注册/反注册/配置读取 |
-
-## 与 Rust hb 的差异
-
-功能对齐,API 按 Go 惯例重塑:
-
-1. `Result<T, HbError>` → `error`;`HbError` → `*hb.Error`(errors.As 可取回)。
-2. 直写响应(`Hb::ok(c, ..)`) → 原生 Gin handler；业务项目统一响应与错误策略，可用 `hb.Write` 写信封。
-3. `merge_all` → 删除;`hb.New()` 返回预装 404/405 信封的 `*gin.Engine`。
-4. `*_secs` 整数配置 → `time.Duration`(TOML 写 `"5s"`/`"2h"`;整数按纳秒)。
-5. `database/sql` 统一池,三方言 pg/mysql/sqlite(`[db].driver` 必填,选型由业务
-   定死、驱动业务 import;`hb_migrations` 记账表,格式与 sqlx 不兼容——记账独立,
-   已应用的 SQL 内容仍以 checksum 比对)。
-6. 密码哈希默认 argon2id(与 hb 相同参数),`$pbkdf2$600000$..` 格式互通。
-7. 示例以 README 承载(本页),不维护 examples/ 目录;业务服务 `main.go`
-   与 `go.mod` 同级。
