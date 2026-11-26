@@ -264,6 +264,8 @@ boot.ServeWith(cfg, mounts, opts...)             // 显式配置;配 WithNacos �
 - 选项:`WithMigrator(embed.FS)`、`WithHook(func(*App) error)`(可多次,顺序执行)、
   `WithAuth(checker)`、`WithWS(path, onMessage)`、`WithWSClose(path, onMessage, onClose)`、
   `WithLogging(false)`(自带日志时关掉内置初始化)、`WithNacos(n)`。
+- 启动日志的 `starting` 行带 `commit`:自动取 `go build` 嵌入的主模块 git 提交(形如 `a1b2c3d 2026-01-02T15:04:05Z`,工作区有改动加 `(dirty)`);源码不含 `.git` 的构建(如容器镜像)可注入覆盖:
+  `go build -ldflags "-X github.com/cai-zl/hb-go/boot.Commit=$(git rev-parse --short HEAD)"`,都没有时记 `unknown`。
 - 启动顺序:日志(log_level > LOG_LEVEL > info)→ 读配置 → 按段连接依赖 →
   迁移 → 钩子 → auth 端点(有 `WithAuth` 时) → 业务及 WS 路由 + `/healthz` `/readyz`(实测 db/redis,不含 s3)→
   监听 → 注册 → 热更监听 → SIGINT/SIGTERM 优雅停机 + 反注册。
@@ -476,6 +478,7 @@ alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2
 | `Hook` | `type Hook func(app *App) error`,启动钩子;常驻任务在这里自行 `go` 启动 |
 | `Option` | `type Option func(*Boot)`,`WithX` 选项的类型;业务只传选项,不直接构造 `Boot` |
 | `App` | `struct { Config *Config; DB *sql.DB; Redis *goredis.Client; S3 *s3.S3; Nacos *nacos.Nacos; Hub *ws.Hub; Sessions *auth.Sessions }`,只配置了的依赖非 nil(`Hub` 恒有) |
+| `Commit` | `string`,启动日志 `commit` 的注入覆盖值:默认读 `go build` 嵌入的主模块 VCS 提交,源码缺 `.git` 时用 `-ldflags "-X github.com/cai-zl/hb-go/boot.Commit=<hash>"` 覆盖 |
 | `WithMigrator(fsys fs.FS) Option` | 启动时跑迁移;FS 根下直接是 `序号_描述.sql`(`//go:embed migrations/*.sql` 须传 `fs.Sub(migrations, "migrations")`) |
 | `WithHook(h Hook) Option` | 追加启动钩子,可多次,按调用顺序执行 |
 | `WithAuth(check auth.AuthChecker) Option` | 自动挂载四个 auth 端点;需要 `[auth]` 和 `[redis]`,多次调用时后者覆盖前者 |

@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -92,6 +93,11 @@ var durationKeys = map[string]map[string]bool{
 	"redis": {"wait_timeout": true},
 	"auth":  {"token_ttl": true, "refresh_ttl": true},
 }
+
+// Commit 启动日志里提交信息的注入覆盖值(默认自动读 go build 嵌入的主模块 VCS 提交):
+//	go build -ldflags "-X github.com/cai-zl/hb-go/boot.Commit=<hash>"
+// 注入后原样打印;适用于源码不含 .git 的构建(如容器镜像)。
+var Commit string
 
 // normalizeDurations 就地改写 raw,失败返回 config: 错误。
 func normalizeDurations(raw map[string]any) error {
@@ -390,7 +396,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	if b.logging {
 		logger, applyLog = initLogging(resolveLevel(cfg))
 	}
-	zap.S().Infow("starting", "app", cfg.AppName)
+	zap.S().Infow("starting", "app", cfg.AppName, "commit", gitCommit())
 	cfg.warnUnknown()
 
 	advertise := cfg.AdvertiseIP
@@ -575,4 +581,41 @@ func detectIP() (string, error) {
 	}
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String(), nil
+}
+
+// gitCommit 启动日志里的提交信息:Commit 注入值 > go build 嵌入的主模块 VCS 提交
+// (形如 "a1b2c3d 2026-11-25T10:00:00Z",工作区有改动加 "(dirty)");都没有记 unknown,不影响启动。
+func gitCommit() string {
+	if Commit != "" {
+		return Commit
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	var rev, stamp string
+	dirty := false
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.time":
+			stamp = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return "unknown"
+	}
+	if len(rev) > 7 {
+		rev = rev[:7]
+	}
+	if dirty {
+		rev += " (dirty)"
+	}
+	if stamp != "" {
+		rev += " " + stamp
+	}
+	return rev
 }
