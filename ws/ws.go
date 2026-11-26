@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 // Heartbeat 服务端 Ping 周期。
@@ -44,7 +44,7 @@ type Conn struct {
 func (c *Conn) Send(msg any) bool {
 	data, err := json.Marshal(msg)
 	if err != nil {
-		slog.Warn("ws send serialize failed; skipped", "conn", c.ID, "err", err)
+		zap.S().Warnw("ws send serialize failed; skipped", "conn", c.ID, "err", err)
 		return false
 	}
 	return c.enqueue(data)
@@ -63,7 +63,7 @@ func (c *Conn) enqueue(data []byte) bool {
 		return false
 	default:
 		// 慢消费者队列满:丢弃避免阻塞调用方
-		slog.Warn("ws send queue full; dropped", "conn", c.ID)
+		zap.S().Warnw("ws send queue full; dropped", "conn", c.ID)
 		return false
 	}
 }
@@ -109,7 +109,7 @@ func (h *Hub) Conn(id string) *Conn {
 func (h *Hub) Broadcast(msg any) {
 	data, err := json.Marshal(msg)
 	if err != nil {
-		slog.Warn("broadcast serialize failed; skipped", "err", err)
+		zap.S().Warnw("broadcast serialize failed; skipped", "err", err)
 		return
 	}
 	h.mu.RLock()
@@ -133,7 +133,7 @@ func (h *Hub) SendTo(id string, msg any) bool {
 	}
 	data, err := json.Marshal(msg)
 	if err != nil {
-		slog.Warn("ws send serialize failed; skipped", "conn", id, "err", err)
+		zap.S().Warnw("ws send serialize failed; skipped", "conn", id, "err", err)
 		return false
 	}
 	if !c.enqueue(data) {
@@ -175,7 +175,7 @@ func (h *Hub) remove(id string) {
 	fn := h.onDisconnect
 	h.mu.Unlock()
 	if ok {
-		slog.Info("websocket closed", "conn", id)
+		zap.S().Infow("websocket closed", "conn", id)
 		if fn != nil {
 			fn(id)
 		}
@@ -208,7 +208,7 @@ func Upgrade(hub *Hub, w http.ResponseWriter, r *http.Request, onMessage func(*C
 		c.ForwardedFor = net.ParseIP(strings.TrimSpace(first))
 	}
 	hub.add(c)
-	slog.Info("websocket connected", "conn", c.ID, "ip", c.IP)
+	zap.S().Infow("websocket connected", "conn", c.ID, "ip", c.IP)
 
 	go writeLoop(c)
 	go readLoop(c, hub, onMessage)

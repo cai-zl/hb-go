@@ -4,10 +4,10 @@ package hb
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"runtime"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // Envelope 是所有业务响应的统一形状。
@@ -67,7 +67,7 @@ func mask(err error) *Error {
 	if errors.As(err, &e) {
 		return e
 	}
-	slog.Warn("internal error", "err", err)
+	zap.S().Warnw("internal error", "err", err)
 	return &Error{Code: 500, Message: "internal error", origin: err}
 }
 
@@ -119,7 +119,7 @@ func Recovery() gin.HandlerFunc {
 			if r := recover(); r != nil {
 				buf := make([]byte, 64<<10)
 				buf = buf[:runtime.Stack(buf, false)]
-				slog.Error("panic recovered", "err", fmt.Sprint(r), "stack", string(buf))
+				zap.S().Errorw("panic recovered", "err", fmt.Sprint(r), "stack", string(buf))
 				if !c.Writer.Written() {
 					c.JSON(200, Envelope{Code: 500, Message: "internal error"})
 				}

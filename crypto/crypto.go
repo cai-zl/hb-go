@@ -11,7 +11,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"log/slog"
+
+	"go.uber.org/zap"
 )
 
 // SHA256 返回 64 字符小写 hex。
@@ -56,7 +57,7 @@ func Encrypt(key string, plaintext []byte) (string, error) {
 // 原始原因仅 debug 级日志。
 func Decrypt(key, encoded string) ([]byte, error) {
 	fail := func(err error) ([]byte, error) {
-		slog.Debug("decrypt failed", "err", err)
+		zap.S().Debugw("decrypt failed", "err", err)
 		return nil, errors.New("crypto: decrypt failed")
 	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)

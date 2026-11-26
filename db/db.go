@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
+	"go.uber.org/zap"
 )
 
 // Config 对应 TOML [db] 段,driver 与 url 必填,其余有缺省值。
@@ -230,7 +230,7 @@ func Migrate(cfg Config, pool *sql.DB, fsys fs.FS) error {
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-		slog.Info("migration applied", "file", m.name)
+		zap.S().Infow("migration applied", "file", m.name)
 	}
 	return nil
 }

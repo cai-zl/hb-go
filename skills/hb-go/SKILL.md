@@ -1,6 +1,6 @@
 ---
 name: hb-go
-description: 在使用 github.com/cai-zl/hb-go 的 Go/Gin 业务仓库开发或评审代码时，查找并复用框架已有的 HTTP 信封、分页、启动装配、配置、鉴权、迁移、Redis、S3、Nacos、WebSocket 和密码哈希 API，避免业务层重复封装。
+description: 在使用 github.com/cai-zl/hb-go 的 Go/Gin 业务仓库开发或评审代码时，查找并复用框架已有的 HTTP 信封、分页、启动装配、配置、日志、鉴权、迁移、Redis、S3、Nacos、WebSocket 和密码哈希 API，避免业务层重复封装。
 ---
 
 # hb-go 业务开发
@@ -28,6 +28,7 @@ description: 在使用 github.com/cai-zl/hb-go 的 Go/Gin 业务仓库开发或�
 | 就地修改 `boot.Snapshot[T]` 返回的共享值；自写等价迁移器或将含 `migrations/` 子目录的原始 embed FS 直接传给 `boot.WithMigrator`。 | 快照只读；迁移用 `boot.WithMigrator` 或 `db.Migrate`，按需先 `fs.Sub` 并处理错误。 |
 | 访问不存在的 `ws.Message.Kind`，默认套 HTTP 信封，或用 `WithWS` 代替握手鉴权与 Origin 限制。 | 用 `msg.Data`；直接传业务值给 `Send`、`SendTo` 或 `Broadcast`，只有已编码的 JSON 才用 `json.RawMessage`。复用业务的握手校验。 |
 | 自制等价密码哈希，用普通 SHA-256 存储密码，或把密码、密钥、令牌写进日志。 | 用 `password.Hash` / `password.Verify`；日志只记录不会暴露秘密的诊断信息。 |
+| 自建第二套日志系统：自己跑 `zap.New` / `zap.ReplaceGlobals` / `log.New`，或引入 logrus、zerolog 等其他日志库。 | 复用 boot 装配的 zap：业务代码一律用 `app.Logger`（`*zap.SugaredLogger`）或启动后的全局 `zap.S()`，级别统一走配置 `log_level`；boot 初始化之前的启动失败直接打 stderr。 |
 
 ## 按任务选现有入口
 
@@ -36,6 +37,7 @@ description: 在使用 github.com/cai-zl/hb-go 的 Go/Gin 业务仓库开发或�
 | 统一 HTTP 响应、业务错误、分页 | 原生 Gin handler 调用业务项目统一出口；可公开的业务错误用 `hb.Err` / `hb.Errf`，未知错误先用 `hb.Internal` 掩码，只写识别出的 `*hb.Error.Code` / `.Message`。分页用 `hb.Page`；解析上游信封用 `hb.Response[T]` / `hb.PageData[T]`，不自定义同形结构。 |
 | Gin 引擎与服务启动 | Nacos 模式用 `boot.Serve`，显式配置用 `boot.ServeWith`；业务路由写成 `boot.Mount`，启动任务用 `boot.WithHook`。启动器已经装配 `/healthz` 和 `/readyz`；独立建引擎用 `hb.New()`，需要 panic 信封时显式装 `hb.Recovery()`。 |
 | 应用配置、客户端 | 用 `boot.ParseConfig` 解析 TOML，业务设置放 `[extra]`，用 `boot.Snapshot[T](app.Config)` 读，勿修改返回的共享快照。走 boot 时复用已配置的 `app.DB`、`app.Redis`、`app.S3`、`app.Nacos`，不在 handler 中重连；独立使用才查各包的 `Connect` / `ConnectAuth`。S3 `Get` 未命中用 `errors.Is(err, s3.ErrNotFound)`。 |
+| 日志 | 用 boot 初始化的 zap（console 编码、stderr、带 caller）：业务代码用 `app.Logger`（`*zap.SugaredLogger`，`WithWS`/`WithHook` 回调同样适用）或全局 `zap.S()`，如 `app.Logger.Infow("order paid", "orderID", id)`；级别走配置 `log_level`（优先级 `log_level` > `LOG_LEVEL` > `info`，Nacos 推送热更），不自建 logger。 |
 | 登录、会话与密码 | 实现 `auth.AuthChecker`：`Check(auth.LoginReq) (json.RawMessage, error)` 校验凭据，在业务实现内用 `json.Marshal` 编码具体的会话类型。向 `boot.Serve` / `boot.ServeWith` 传 `boot.WithAuth(checker)` 自动挂载四个端点，需要 `[auth]` 和 `[redis]`；配置这两段但不传选项时，只组装 `app.Sessions`，不暴露端点。受保护路由组挂 `auth.Guard(app.Sessions)`，原生 Gin handler 用 `auth.From[T](c)` 取数据并检查错误；需要 access token 时用 `auth.Token(c)`。密码用 `password.Hash` / `password.Verify`，不拿普通 SHA-256 当密码哈希。 |
 | DB 迁移 | 启动时用 `boot.WithMigrator`，独立场景用 `db.Migrate`；迁移文件放在传入 FS 的根目录，命名如 `0001_init.sql`。用 `//go:embed migrations/*.sql` 时，先取 `fs.Sub(migrations, "migrations")`，处理错误后再传子 FS。 |
 | WebSocket | 用 `boot.WithWS` / `boot.WithWSClose` 和 `app.Hub`，不另建连接表或写循环。`ws.Message` 只有 `Conn` / `Data`；业务值直接传给 `Send`、`SendTo` 或 `Broadcast`，自动编码 JSON、不套 HTTP 信封。只有已编码的 JSON 才用 `json.RawMessage`。鉴权和 Origin 限制仍由业务决定并实施。 |

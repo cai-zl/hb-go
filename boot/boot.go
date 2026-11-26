@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -30,6 +29,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pelletier/go-toml/v2"
 	goredis "github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/auth"
@@ -115,6 +116,7 @@ func normalizeDurations(raw map[string]any) error {
 // 只配置了的依赖字段非 nil。
 type App struct {
 	Config   *Config
+	Logger   *zap.SugaredLogger // zap 全局 Logger 的 Sugared 视图;业务直接用它,WithLogging(false) 时为 nil
 	DB       *sql.DB
 	Redis    *goredis.Client
 	S3       *s3.S3
@@ -259,18 +261,18 @@ func (c *Config) ReloadExtraFrom(table map[string]any) {
 	for ty, e := range c.snaps {
 		v, err := e.parse(table)
 		if err != nil {
-			slog.Warn("snapshot reload kept old value", "type", ty.String(), "err", err.Error())
+			zap.S().Warnw("snapshot reload kept old value", "type", ty.String(), "err", err.Error())
 			continue
 		}
 		e.value = v
 	}
-	slog.Info("extra config reloaded")
+	zap.S().Infow("extra config reloaded")
 }
 
 // warnUnknown 未知顶层键打 warn 提示,不拦截启动。
 func (c *Config) warnUnknown() {
 	for _, k := range c.Unknown {
-		slog.Warn("unknown top-level config key; business config belongs in [extra]", "key", k)
+		zap.S().Warnw("unknown top-level config key; business config belongs in [extra]", "key", k)
 	}
 }
 
@@ -300,8 +302,8 @@ type Option func(*Boot)
 // 不调用则不跑迁移。需要配置 [db]。
 func WithMigrator(fsys fs.FS) Option { return func(b *Boot) { b.migrator = fsys } }
 
-// WithLogging 日志开关:默认 boot 自动初始化 slog(级别优先级
-// log_level > LOG_LEVEL > info);自带 slog 时传 false 关闭。
+// WithLogging 日志开关:默认 boot 自动初始化 zap(console 编码,stderr,级别优先级
+// log_level > LOG_LEVEL > info,全局 zap.S() 与 app.Logger 可用);自带日志时传 false 关闭。
 func WithLogging(enabled bool) Option { return func(b *Boot) { b.logging = enabled } }
 
 // WithHook 追加启动钩子,可多次调用,按调用顺序执行。
@@ -384,10 +386,11 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	}
 
 	var applyLog func(string)
+	var logger *zap.SugaredLogger
 	if b.logging {
-		applyLog = initLogging(resolveLevel(cfg))
+		logger, applyLog = initLogging(resolveLevel(cfg))
 	}
-	slog.Info("starting", "app", cfg.AppName)
+	zap.S().Infow("starting", "app", cfg.AppName)
 	cfg.warnUnknown()
 
 	advertise := cfg.AdvertiseIP
@@ -400,7 +403,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	}
 
 	// 按配置段连接依赖(段缺失=关闭该依赖;缺必填项已在 ParseConfig/Connect 报错)
-	app := &App{Config: cfg, Hub: ws.NewHub()}
+	app := &App{Config: cfg, Hub: ws.NewHub(), Logger: logger}
 	if cfg.Db != nil {
 		pool, err := db.Connect(*cfg.Db)
 		if err != nil {
@@ -411,7 +414,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 			if err := db.Migrate(*cfg.Db, pool, b.migrator); err != nil {
 				return err
 			}
-			slog.Info("migrations applied")
+			zap.S().Infow("migrations applied")
 		}
 	}
 	if cfg.Redis != nil {
@@ -441,7 +444,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 		app.Hub.SetOnDisconnect(b.onClose)
 	}
 	for i, h := range b.hooks {
-		slog.Debug("running startup hook", "hook", i)
+		zap.S().Debugw("running startup hook", "hook", i)
 		if err := h(app); err != nil {
 			return err
 		}
@@ -461,7 +464,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 			if err := ws.Upgrade(app.Hub, c.Writer, c.Request, func(conn *ws.Conn, msg ws.Message) {
 				onMessage(app, conn, msg)
 			}); err != nil {
-				slog.Warn("websocket handshake failed", "err", err)
+				zap.S().Warnw("websocket handshake failed", "err", err)
 				if !c.Writer.Written() {
 					hb.Write(c, http.StatusOK, hb.Envelope{Code: 500, Message: "handshake failed"})
 				}
@@ -474,7 +477,7 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	if err != nil {
 		return fmt.Errorf("bind %s:%d failed: %w", cfg.Host, cfg.Port, err)
 	}
-	slog.Info("listening", "host", cfg.Host, "port", cfg.Port)
+	zap.S().Infow("listening", "host", cfg.Host, "port", cfg.Port)
 
 	// 先监听后注册:注册失败不占着端口
 	if nc != nil {
@@ -482,14 +485,14 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 			return err
 		}
 	} else {
-		slog.Info("nacos disabled, running standalone (no service registry)")
+		zap.S().Infow("nacos disabled, running standalone (no service registry)")
 	}
 
 	// 配置热更监听(仅 env 模式;日志关闭则无监听)
 	if hot != nil && applyLog != nil {
 		change := func(content string) { onConfigPush(cfg, applyLog, content) }
 		if err := nc.ListenConfig(hot.dataID, hot.group, change); err != nil {
-			slog.Warn("config listener failed; hot reload disabled", "err", err.Error())
+			zap.S().Warnw("config listener failed; hot reload disabled", "err", err.Error())
 		}
 	}
 
@@ -499,14 +502,14 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
-	slog.Info("shutdown signal received")
+	zap.S().Infow("shutdown signal received")
 	if err := srv.Shutdown(context.Background()); err != nil {
-		slog.Warn("graceful shutdown failed", "err", err.Error())
+		zap.S().Warnw("graceful shutdown failed", "err", err.Error())
 	}
 	// 临时实例,注销失败也会被 Nacos 自动摘除
 	if nc != nil {
 		if err := nc.Deregister(cfg.AppName, advertise, uint64(cfg.Port), cfg.Group); err != nil {
-			slog.Error("deregister failed (ephemeral instance will expire)", "err", err.Error())
+			zap.S().Errorw("deregister failed (ephemeral instance will expire)", "err", err.Error())
 		}
 	}
 	return nil
@@ -517,12 +520,12 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 func onConfigPush(cfg *Config, applyLog func(string), content string) {
 	fresh, err := ParseConfig(content)
 	if err != nil {
-		slog.Warn("config reload ignored (bad toml)", "err", err.Error())
+		zap.S().Warnw("config reload ignored (bad toml)", "err", err.Error())
 		return
 	}
 	level := resolveLevel(fresh)
 	applyLog(level)
-	slog.Info("log level reloaded", "level", level)
+	zap.S().Infow("log level reloaded", "level", level)
 	cfg.ReloadExtraFrom(fresh.extra)
 }
 
@@ -537,20 +540,29 @@ func resolveLevel(cfg *Config) string {
 	return "info"
 }
 
-// initLogging 初始化 slog(TextHandler,级别挂 LevelVar),返回热更闭包
-// (改 log_level 无需重启)。
-func initLogging(level string) func(string) {
-	var lv slog.Level
+// initLogging 初始化 zap(console 编码输出到 stderr,级别挂 AtomicLevel,带 caller)
+// 并设为全局 Logger;返回 SugaredLogger 与热更闭包(改 log_level 无需重启)。
+func initLogging(level string) (*zap.SugaredLogger, func(string)) {
+	lv := zap.NewAtomicLevel()
 	if err := lv.UnmarshalText([]byte(level)); err != nil {
-		lv = slog.LevelInfo
+		lv.SetLevel(zapcore.InfoLevel)
 	}
-	lvVar := new(slog.LevelVar)
-	lvVar.Set(lv)
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvVar})))
-	return func(l string) {
-		var nl slog.Level
-		if err := nl.UnmarshalText([]byte(l)); err == nil {
-			lvVar.Set(nl)
+	cfg := zap.Config{
+		Level:            lv,
+		Development:      false,
+		Encoding:         "console",
+		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
+		OutputPaths:      []string{"stderr"},
+		ErrorOutputPaths: []string{"stderr"},
+	}
+	logger, err := cfg.Build()
+	if err != nil {
+		logger = zap.NewNop()
+	}
+	zap.ReplaceGlobals(logger)
+	return logger.Sugar(), func(l string) {
+		if nl, err := zapcore.ParseLevel(l); err == nil {
+			lv.SetLevel(nl)
 		}
 	}
 }

@@ -9,13 +9,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	goredis "github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 
 	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/crypto"
@@ -277,7 +277,7 @@ func Guard(sessions *Sessions) gin.HandlerFunc {
 		rec, ok, err := sessions.Get(token)
 		if err != nil {
 			// Redis 故障等基础设施错误:原文只进日志,对外统一 500 信封,不冒充 401
-			slog.Warn("internal error", "err", err)
+			zap.S().Warnw("internal error", "err", err)
 			hb.Write(c, http.StatusOK, hb.Envelope{Code: 500, Message: "internal error"})
 			c.Abort()
 			return

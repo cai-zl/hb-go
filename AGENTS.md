@@ -62,7 +62,7 @@ gofmt -l .       # files that need formatting
 - No Makefile, linter or CI: `go vet`, `gofmt` and `go test` are the only gates. `go run` does not apply.
 - **Windows**: `boot`'s tests call `syscall.Kill` (`TestServeStandaloneLifecycle`), which is undefined there, so `go vet ./...` and `go test ./...` fail with `[build failed]` for `boot` while the other 9 packages pass. Use `go test $(go list ./... | grep -v '/boot$')` and `GOOS=linux go vet ./...` (type-checks every package, `boot` tests included).
 - `gofmt -l .` listing every file means CRLF line endings from `core.autocrlf=true` (the index is LF), not formatting drift. Check committed content with `git show HEAD:<file> | gofmt -l`.
-- Test output includes expected `WARN`/`ERROR` slog lines from the error-masking and `Recovery` tests.
+- Test output includes expected `WARN`/`ERROR` zap lines from the error-masking and `Recovery` tests.
 
 Integration tests are env-gated and hit real services; see Testing & QA.
 
@@ -91,7 +91,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 ### Structure and wiring
 
 - `db.Connect`, `redis.Connect` and `s3.Connect` validate, connect and ping immediately; `nacos.ConnectAuth` only validates the address (the SDK client is created lazily and does not dial). In-memory types use `NewX` constructors.
-- `boot.App` holds the wired clients (`DB`, `Redis`, `S3`, `Nacos`, `Sessions`; nil when the section is absent) and `Hub` (always set).
+- `boot.App` holds the wired clients (`DB`, `Redis`, `S3`, `Nacos`, `Sessions`; nil when the section is absent), `Logger` (`*zap.SugaredLogger`; nil with `WithLogging(false)`) and `Hub` (always set).
 - Business code plugs in through `boot.Mount = func(app *boot.App, rg *gin.RouterGroup)`, `boot.WithHook(func(*boot.App) error)`, `boot.WithAuth(check auth.AuthChecker)` and `boot.WithWS(path, onMessage)`. Long-running tasks start their own goroutine inside a hook.
 - Functional options (`type Option func(*Boot)`, `WithX`) are used only in `boot`.
 - Generics serve typed helpers: `hb.Response[T]`, `hb.PageData[T]`, `auth.From[T]`, `boot.Snapshot[T]`.
@@ -101,7 +101,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 - Public APIs take no `ctx`; library calls use `context.Background()`. In handlers, pass gin's `c` to `app.DB.QueryContext(c, …)`. Deadlines exist only for startup checks, `/readyz` (3s) and WS writes (10s).
 - Shared state uses `sync.RWMutex` with copy-then-unlock (callbacks run outside the lock, e.g. `ws.Hub.remove`), `sync.Once` for closing channels, and non-blocking channel sends that drop on a full queue.
-- Logging is the global `log/slog` with English key-value attrs (`"err", err`). `boot.initLogging` installs a text handler on stderr; level is `log_level` > `LOG_LEVEL` > `info`. Secrets (Nacos, S3 credentials) are never logged; `crypto.Decrypt` logs causes at debug only.
+- Logging is zap (`go.uber.org/zap`, sugared API) with English key-value pairs (`"err", err`). `boot.initLogging` installs a console-encoder logger on stderr as the global logger (`zap.S()`, caller included); level is `log_level` > `LOG_LEVEL` > `info`, hot-reloaded through a `zap.AtomicLevel`. Business code logs with `app.Logger` (`*zap.SugaredLogger`) or the global `zap.S()` — never build a second logger setup. Before boot initializes logging (early startup failures in `main`) the globals are nop, so print such errors to stderr directly. Secrets (Nacos, S3 credentials) are never logged; `crypto.Decrypt` logs causes at debug only.
 
 ### Comments and language
 
@@ -144,9 +144,9 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 ## Runtime/Tooling Preferences
 
-- Go 1.27.3 (`go 1.27.3` in `go.mod`, no `toolchain` line). The code relies on `log/slog`, `crypto/pbkdf2` and generics.
+- Go 1.27.3 (`go 1.27.3` in `go.mod`, no `toolchain` line). The code relies on `go.uber.org/zap`, `crypto/pbkdf2` and generics.
 - Pure Go: no cgo, no build tags, no `go:generate`, no `vendor/`, no `go.work`.
-- Direct deps: gin, gorilla/websocket, pgx/v5, minio-go/v7, nacos-sdk-go/v2, go-toml/v2, go-redis/v9, x/crypto, modernc.org/sqlite (test imports only). Prefer the stdlib over a new dependency.
+- Direct deps: gin, gorilla/websocket, pgx/v5, minio-go/v7, nacos-sdk-go/v2, go-toml/v2, go-redis/v9, go.uber.org/zap, x/crypto, modernc.org/sqlite (test imports only). Prefer the stdlib over a new dependency.
 - Tests use the stdlib `testing` package only: no testify, no mock generators.
 
 ## Testing & QA

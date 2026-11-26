@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"log"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	goredis "github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/cai-zl/hb-go"
 	"github.com/cai-zl/hb-go/auth"
@@ -53,15 +53,14 @@ func TestGuardMasksSessionStoreError(t *testing.T) {
 		t.Fatal("Guard allowed a request when the session store failed")
 	})
 
-	// 原因只进日志不进响应:捕获默认 slog(SetDefault 会顺带改写标准 log,一并恢复)
+	// 原因只进日志不进响应:捕获 zap 全局 Logger,断言后恢复
 	var logs bytes.Buffer
-	oldDefault, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(oldDefault)
-		log.SetOutput(oldWriter)
-		log.SetFlags(oldFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	restore := zap.ReplaceGlobals(zap.New(zapcore.NewCore(
+		zapcore.NewJSONEncoder(zap.NewDevelopmentEncoderConfig()),
+		zapcore.AddSync(&logs),
+		zapcore.DebugLevel,
+	)))
+	t.Cleanup(restore)
 
 	req := httptest.NewRequest(http.MethodGet, "/private", nil)
 	req.Header.Set("Authorization", "Bearer fake")
@@ -80,8 +79,8 @@ func TestGuardMasksSessionStoreError(t *testing.T) {
 		t.Fatalf("response leaks the store error: %s", w.Body)
 	}
 	var entry struct {
-		Level string `json:"level"`
-		Msg   string `json:"msg"`
+		Level string `json:"L"`
+		Msg   string `json:"M"`
 		Err   string `json:"err"`
 	}
 	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")

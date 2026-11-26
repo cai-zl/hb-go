@@ -57,7 +57,7 @@ package main
 import (
 	"embed"
 	"errors"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -79,7 +79,8 @@ func main() {
 		boot.WithAuth(loginChecker{}), // 实现见下方 auth 小节;需要 [auth] 和 [redis]
 	)
 	if err != nil {
-		slog.Error("startup failed", "err", err)
+		// boot 初始化 zap 之前失败的(如 Nacos 不通),全局 zap.S() 还是 nop,直接打 stderr
+		fmt.Fprintln(os.Stderr, "startup failed:", err)
 		os.Exit(1)
 	}
 }
@@ -255,11 +256,14 @@ boot.Serve(mounts, opts...)                      // 全环境:NACOS_* 环境变�
 boot.ServeWith(cfg, mounts, opts...)             // 显式配置;配 WithNacos 则仅注册,无热更
 ```
 
-- `Mount = func(app *App, rg *gin.RouterGroup)`;`App{Config, DB, Redis, S3, Nacos, Hub, Sessions}`
+- `Mount = func(app *App, rg *gin.RouterGroup)`;`App{Config, Logger, DB, Redis, S3, Nacos, Hub, Sessions}`
   只配置了的依赖字段非 nil。
+- 日志是 zap(console 编码输出到 stderr,带 caller):boot 初始化后业务直接用
+  `app.Logger`(`*zap.SugaredLogger`)或全局 `zap.S()`,级别走 `log_level`(优先级
+  `log_level` > `LOG_LEVEL` > `info`,可热更);boot 初始化之前的启动失败自行打 stderr。
 - 选项:`WithMigrator(embed.FS)`、`WithHook(func(*App) error)`(可多次,顺序执行)、
   `WithAuth(checker)`、`WithWS(path, onMessage)`、`WithWSClose(path, onMessage, onClose)`、
-  `WithLogging(false)`(自带 slog 时关掉内置初始化)、`WithNacos(n)`。
+  `WithLogging(false)`(自带日志时关掉内置初始化)、`WithNacos(n)`。
 - 启动顺序:日志(log_level > LOG_LEVEL > info)→ 读配置 → 按段连接依赖 →
   迁移 → 钩子 → auth 端点(有 `WithAuth` 时) → 业务及 WS 路由 + `/healthz` `/readyz`(实测 db/redis,不含 s3)→
   监听 → 注册 → 热更监听 → SIGINT/SIGTERM 优雅停机 + 反注册。
@@ -477,7 +481,7 @@ alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2
 | `WithAuth(check auth.AuthChecker) Option` | 自动挂载四个 auth 端点;需要 `[auth]` 和 `[redis]`,多次调用时后者覆盖前者 |
 | `WithWS(path string, onMessage func(*App, *ws.Conn, ws.Message)) Option` | 挂一个 WebSocket 端点,可多次 |
 | `WithWSClose(path string, onMessage func(*App, *ws.Conn, ws.Message), onClose func(id string)) Option` | 同 `WithWS`,另带断连回调(每 Hub 一个,后者覆盖前者) |
-| `WithLogging(enabled bool) Option` | `false` 关闭内置 slog 初始化,同时失去热更监听 |
+| `WithLogging(enabled bool) Option` | `false` 关闭内置 zap 初始化,同时失去热更监听 |
 | `WithNacos(n *nacos.Nacos) Option` | `ServeWith` 下接注册与停机反注册 |
 | `ParseConfig(text string) (*Config, error)` | 解析 TOML 配置:应用缺省值、校验 port、收集未知顶层键 |
 | `Config` | `struct { AppName, Host, Group, LogLevel string; Port int; AdvertiseIP string; Unknown []string; Db *db.Config; Redis *redis.Config; S3 *s3.Config; Auth *auth.Config }` |
