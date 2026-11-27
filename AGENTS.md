@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`github.com/cai-zl/hb-go` is a Go **library** (no `main` package, no binary): an HTTP response envelope for Gin plus a one-call service starter, `boot.Serve`. Business routes use native Gin handlers and apply the consuming project's response and error policy. It is the Go counterpart of a Rust library named hb, and its `crypto` and `password` formats are byte-compatible with that version.
+`github.com/cai-zl/hb-go` is a Go **library** (no `main` package, no binary): an HTTP response envelope for Gin plus a one-call service starter, `boot.Serve`. Business routes use native Gin handlers and apply the consuming project's response and error policy.
 
 - The module root is package `hb` (directory `hb-go` ≠ package name). Import `"github.com/cai-zl/hb-go"` and reference `hb.`.
 - `README.md` (Chinese) is the only documentation. There are no scripts, Makefile, CI, linter config or `examples/`.
@@ -13,7 +13,7 @@
 boot ──► internal/api, auth, db, nacos, redis, s3, ws, hb   wiring only
 internal/api ──► auth, hb                                built-in HTTP endpoints
 auth ──► crypto, hb                                      sessions and auth middleware
-crypto, db, nacos, password, redis, s3, ws ──► hb   leaf packages; never import each other
+crypto, db, nacos, redis, s3, ws ──► hb   leaf packages; never import each other
 ```
 
 Keep this direction. Dependencies are passed as concrete types; `auth.AuthChecker` is the business login extension point, and `boot` is the only assembler.
@@ -47,7 +47,6 @@ Keep this direction. Dependencies are passed as concrete types; `auth.AuthChecke
 | `s3/` | `s3` | minio-go wrapper: put/get/delete/exists/presign, `ErrNotFound` |
 | `ws/` | `ws` | WebSocket hub on gorilla/websocket |
 | `crypto/` | `crypto` | SHA-256, HMAC-SHA256, `RandomHex`, AES-256-GCM `Encrypt`/`Decrypt` |
-| `password/` | `password` | argon2id (default) / bcrypt / pbkdf2 `Hash`, `Verify`, `Algorithm` |
 | `skills/hb-go/` | — | Skill for consumer projects using hb-go |
 
 ## Development Commands
@@ -72,7 +71,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 - Business handlers own queries, validation and authorization. Use the project's shared response and error handling; for custom responses, use Gin (e.g. `c.Data(…)`) and return after writing.
 - HTTP boundary only: `hb.Err(code, msg)` / `hb.Errf(code, fmt, args...)` build errors meant for an HTTP client (code `0` is normalized to `500`); `hb.Internal(err)` logs and masks an unknown error for the response and keeps the cause for `errors.As`/`Unwrap`.
-- Config, startup, connect and other non-HTTP code (`boot`, `db`, `redis`, `s3`, `nacos`, `auth.Sessions`, `crypto`, `password`, `ws.Upgrade`) returns plain Go `error`s (`errors.New` / `fmt.Errorf` with `%w`) without logging them; the HTTP layer that consumes the error logs and masks it (`auth.Guard`, `internal/api.writeAuthRouteError`).
+- Config, startup, connect and other non-HTTP code (`boot`, `db`, `redis`, `s3`, `nacos`, `auth.Sessions`, `crypto`, `ws.Upgrade`) returns plain Go `error`s (`errors.New` / `fmt.Errorf` with `%w`) without logging them; the HTTP layer that consumes the error logs and masks it (`auth.Guard`, `internal/api.writeAuthRouteError`).
 - Return `error`, never `*hb.Error` (typed-nil pitfall).
 - Config problems: `errors.New("<pkg> config: … is required")`; TOML parse errors are `fmt.Errorf("config: %w", err)`. Connection strings and credentials never appear in error text (`redis config: invalid url`, `db config: invalid pg url`, `s3 config: failed to initialize client`).
 - The only sentinel is `s3.ErrNotFound` (`errors.Is`; a plain `error`, a handler that wants a 404 maps it to `hb.Err(404, …)` itself). `*hb.Error` is inspected with `var e *hb.Error; errors.As(err, &e)` only at the HTTP boundary.
@@ -112,7 +111,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 
 ### Contracts that must not drift
 
-- `crypto` output (`base64(nonce‖ciphertext‖tag)`, key = SHA-256 of the passphrase) and `password` formats and params (argon2id `m=19456,t=2,p=1`; bcrypt cost 12 normalized to `$2b$`; `$pbkdf2$600000$…`) are byte-compatible with Rust hb. `password/password_test.go` pins Rust-generated vectors (`rustVectors`). `password.Verify` never panics and returns `false` on junk input.
+- `crypto` output (`base64(nonce‖ciphertext‖tag)`, key = SHA-256 of the passphrase) and password formats and params (argon2id `m=19456,t=2,p=1`; bcrypt cost 12 normalized to `$2b$`; `$pbkdf2$600000$…`) are frozen formats. `crypto.Verify` never panics and returns `false` on junk input.
 - Password verification compares with `subtle.ConstantTimeCompare`; randomness comes from `crypto/rand`. `crypto.Decrypt` always reports the plain error `crypto: decrypt failed`.
 - Persisted and protocol names: ledger table `hb_migrations`, Redis prefix `hb:auth:`, gin keys `hb.session`/`hb.token`, envelope JSON keys.
 - Migrations (`db.Migrate`): up-only, one transaction per file, `<number>_<desc>.sql`, SQL written in the chosen dialect and executed verbatim. Applied files are skipped **by number only**; checksums are stored but never compared. MySQL needs `multiStatements=true` in the DSN or `Migrate` fails.
@@ -140,7 +139,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 ### README examples that do not match the code
 
 - The quick start passes the `//go:embed migrations/*.sql` FS straight to `WithMigrator`. `db.Migrate` lists the FS root and silently applies nothing; pass `fs.Sub(migrations, "migrations")` instead.
-- The TOML sample repeats `[db]` and omits the required `url`. `password.Algorithm` returns `"pbkdf2"`, not `"pbkdf2-sha256"`.
+- The TOML sample repeats `[db]` and omits the required `url`. `crypto.Algorithm` returns `"pbkdf2"`, not `"pbkdf2-sha256"`.
 
 ## Runtime/Tooling Preferences
 
@@ -152,7 +151,7 @@ Integration tests are env-gated and hit real services; see Testing & QA.
 ## Testing & QA
 
 - **Layout**: tests use an external `<pkg>_test` package by default. Internal tests include `boot/boot_internal_test.go` (`resolveLevel`) and `db/db_test.go` (registers the sqlite driver for tests only).
-- **Style**: no `t.Run`, `t.Parallel` or `testing.Short`; no mocks, interfaces or `testdata/`. Fixtures are inline: TOML string literals, `fstest.MapFS` migrations, Rust vectors, `httptest.NewRecorder` / `httptest.NewServer`, sqlite `:memory:` via `sqlitePool`.
+- **Style**: no `t.Run`, `t.Parallel` or `testing.Short`; no mocks, interfaces or `testdata/`. Fixtures are inline: TOML string literals, `fstest.MapFS` migrations, `httptest.NewRecorder` / `httptest.NewServer`, sqlite `:memory:` via `sqlitePool`.
 - **Names**: `Test<Unit><Behaviour>` without underscores (`TestErrZeroCodeIs500`, `TestMigrateFailureIsAtomic`); one end-to-end test per area (`TestAuthFlow`, `TestServeStandaloneLifecycle`).
 - **Assertions**: table cases as a plain loop with the case name folded into the message; `t.Fatalf("x = %v, want …")` for failures; HTTP-boundary errors checked with `errors.As` to `*hb.Error`, then `e.Message` / `e.Code`; plain errors checked by exact `err.Error()` text, `errors.Is` or `errors.As` on the underlying type; JSON decoded to `map[string]any` (numbers are `float64`).
 - **Helpers**: unexported, first line `t.Helper()`, duplicated per package rather than shared (`get`, `mustParse`, `do`, `freePort`, `waitFor`, `sqlitePool`). Use `t.Setenv`, `t.Cleanup` and `gin.SetMode(gin.TestMode). Reference tests to copy: `redis/redis_test.go` (unit), `db/db_test.go` (FS + DB), `ws/ws_test.go` (hub).

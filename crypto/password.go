@@ -1,6 +1,4 @@
-// Package password 提供密码哈希与校验,输出格式与 Rust 版 hb 的 crypto
-// 模块逐字节兼容(存量哈希可直接校验、新哈希可被 Rust 校验)。
-package password
+package crypto
 
 import (
 	"crypto/pbkdf2"
@@ -27,14 +25,13 @@ const (
 	AlgPBKDF2SHA256 HashAlg = "pbkdf2"
 )
 
-// 参数与 Rust 版 hb 一致,保证跨语言互通。
 const (
 	argon2MemoryKiB  uint32 = 19456
 	argon2Time       uint32 = 2
 	argon2Threads    uint8  = 1
 	argon2KeyLen     uint32 = 32
 	argon2SaltLen           = 16
-	bcryptCost              = 12 // Rust bcrypt crate DEFAULT_COST
+	bcryptCost              = 12
 	pbkdf2Iterations        = 600000
 	pbkdf2KeyLen            = 32
 	pbkdf2SaltLen           = 16
@@ -51,7 +48,7 @@ func Hash(plain string) (string, error) { return HashWith(plain, AlgArgon2id) }
 
 // HashWith 按指定算法生成:
 //   - argon2id: $argon2id$v=19$m=19456,t=2,p=1$<b64盐>$<b64哈希>
-//   - bcrypt:   $2b$12$...(与 Rust bcrypt crate 同前缀)
+//   - bcrypt:   $2b$12$...
 //   - pbkdf2:   $pbkdf2$600000$<盐hex>$<派生hex>(PBKDF2-HMAC-SHA256,32 字节派生/16 字节盐)
 func HashWith(plain string, alg HashAlg) (string, error) {
 	switch alg {

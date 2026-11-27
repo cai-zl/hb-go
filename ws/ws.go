@@ -183,7 +183,7 @@ func (h *Hub) remove(id string) {
 }
 
 var upgrader = websocket.Upgrader{
-	// 浏览器跨域由业务自行约束;与 Rust axum 一样不在库层拦截 Origin
+	// 浏览器跨域由业务自行约束;库层不拦截 Origin
 	CheckOrigin: func(*http.Request) bool { return true },
 }
 

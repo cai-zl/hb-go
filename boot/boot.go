@@ -378,7 +378,7 @@ func Serve(mounts []Mount, opts ...Option) error {
 		return err
 	}
 	b := newBoot(mounts, opts)
-	// 热更监听与日志初始化绑定(与 Rust 一致:日志关闭则无监听)
+	// 热更监听与日志初始化绑定(日志关闭则无监听)
 	return b.run(cfg, client, &hotReload{dataID: nc.DataID, group: nc.Group})
 }
 

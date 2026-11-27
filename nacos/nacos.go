@@ -1,5 +1,5 @@
 // Package nacos 包装 nacos-sdk-go/v2:配置中心 + 命名服务一次建好。
-// register/get_config 只在启动、停机与热更路径调用(与 Rust 版一致);
+// register/get_config 只在启动、停机与热更路径调用;
 // 配置不存在返回「未找到」而非错误;密钥不落日志。
 package nacos
 

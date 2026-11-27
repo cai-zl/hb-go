@@ -24,11 +24,10 @@ module 路径 `github.com/cai-zl/hb-go`,下表包名为简写。
 | `hb/nacos` | 配置中心 + 服务注册 |
 | `hb/ws` | WebSocket Hub(广播/定向/心跳) |
 | `hb/auth` | Redis 会话 + OAuth2 风格四端点 |
-| `hb/crypto` | AES-256-GCM、SHA256/HMAC、随机数 |
-| `hb/password` | argon2id/bcrypt/pbkdf2 哈希与校验 |
+| `hb/crypto` | AES-256-GCM、SHA256/HMAC、随机数、argon2id/bcrypt/pbkdf2 密码哈希 |
 
 包间依赖只有两个方向:所有子包 → `hb` 根包;`hb/boot` → 各子包(仅做组装)。
-`db/redis/s3/nacos/ws/password` 等叶子互不依赖;`auth → crypto`(令牌随机数)是
+`db/redis/s3/nacos/ws` 等叶子互不依赖;`auth → crypto`(令牌随机数)是
 唯一的叶子间依赖。
 
 完整 API 清单见文末 [API 速查](#api-速查)。
@@ -209,7 +208,7 @@ rate_limit = 100
 
 采用 hb 信封时，用 `hb.Write` / `hb.Envelope` 写响应，`hb.Page` 构造分页，`hb.Err` / `hb.Errf` 表达可公开的业务错误。若采用上例的状态码约定，常规响应使用 HTTP 200，由 `code` 表达业务结果。未知错误先用 `hb.Internal` 掩码，只写识别出的 `*hb.Error.Code` / `.Message`，不把底层原因或凭据写给客户端。
 
-配置、启动与依赖操作（`boot`、`db`、`redis`、`s3`、`nacos`、`auth.Sessions`、`crypto`、`password`、`ws`）返回普通 `error`，日志由消费错误的一方处理；非 HTTP 调用不使用 `hb.Err` / `hb.Errf` / `hb.Internal`，只有 HTTP 层才把错误变成可公开的信封。
+配置、启动与依赖操作（`boot`、`db`、`redis`、`s3`、`nacos`、`auth.Sessions`、`crypto`、`ws`）返回普通 `error`，日志由消费错误的一方处理；非 HTTP 调用不使用 `hb.Err` / `hb.Errf` / `hb.Internal`，只有 HTTP 层才把错误变成可公开的信封。
 
 ```go
 e := hb.New() // 预装 404/405 框架信封的 gin 引擎(Recovery 需显式 e.Use)
@@ -300,7 +299,7 @@ Redis 双键会话(`{prefix}a:{token}` / `{prefix}r:{token}` 互存对端),acces
 `"client_credentials"` 走客户端 `ClientChecker`,其他值返回业务码 400 `unsupported grant type`。
 
 ```go
-// 使用 encoding/json 和 hb-go 的 auth、boot、password 包。
+// 使用 encoding/json 和 hb-go 的 auth、boot、crypto 包。
 type loginChecker struct{}
 
 type sessionData struct {
@@ -314,7 +313,7 @@ func (loginChecker) Check(req auth.LoginReq) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !password.Verify(req.Password, stored.Hash) {
+	if !crypto.Verify(req.Password, stored.Hash) {
 		return nil, hb.Err(401, "invalid username or password")
 	}
 	return json.Marshal(sessionData{UID: stored.ID, Role: stored.Role})
@@ -454,7 +453,7 @@ _ = n.Register("svc", "10.0.0.1", 3000, "DEFAULT_GROUP")   // 临时实例
 _ = n.Deregister("svc", "10.0.0.1", 3000, "DEFAULT_GROUP")
 ```
 
-## crypto / password
+## crypto
 
 ```go
 sum := crypto.SHA256(data)                    // 小写 hex
@@ -463,10 +462,10 @@ n, _ := crypto.RandomHex(32)                  // 64 字符随机 hex
 enc, _ := crypto.Encrypt("口令", data)        // base64(nonce‖ct‖tag)
 dec, err := crypto.Decrypt("口令", enc)       // 失败一律 "crypto: decrypt failed"
 
-h, _ := password.Hash("hunter2")              // argon2id(默认)
-h, _ = password.HashWith("x", password.AlgBcrypt)
-ok := password.Verify("hunter2", h)           // 前缀分派;垃圾输入一律 false
-alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2-sha256"
+h, _ := crypto.Hash("hunter2")                  // argon2id(默认)
+h, _ = crypto.HashWith("x", crypto.AlgBcrypt)
+ok := crypto.Verify("hunter2", h)               // 前缀分派;垃圾输入一律 false
+alg := crypto.Algorithm(h)                      // "argon2id" / "bcrypt" / "pbkdf2-sha256"
 ```
 
 ## API 速查
@@ -600,17 +599,17 @@ alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2
 | `Nacos.Register(service, ip string, port uint64, group string) error`、`Nacos.Deregister(service, ip string, port uint64, group string) error` | 注册 / 反注册临时实例 |
 | `Config` | `struct { ServerAddr, Namespace, Username, Password, DataID, Group string }` |
 
-### crypto / password
+### crypto
 
 | API | 说明 |
 | --- | --- |
 | `crypto.SHA256(data []byte) string`、`crypto.HMACSHA256(key, data []byte) string` | 64 字符小写 hex |
 | `crypto.RandomHex(n int) string` | n 字节 CSPRNG 随机数的 hex(2n 字符);登录令牌即 `RandomHex(32)`,业务生成随机 ID 直接复用 |
 | `crypto.Encrypt(key string, plaintext []byte) (string, error)`、`crypto.Decrypt(key, encoded string) ([]byte, error)` | AES-256-GCM,`base64(nonce‖ct‖tag)`;解密失败一律 `crypto: decrypt failed` |
-| `password.Hash(plain string) (string, error)` | 密码哈希,默认 argon2id |
-| `password.HashWith(plain string, alg HashAlg) (string, error)` | 指定算法:`password.AlgArgon2id`、`password.AlgBcrypt`、`password.AlgPBKDF2SHA256` |
-| `password.Verify(plain, stored string) bool` | 按前缀分派校验;垃圾输入一律 false |
-| `password.Algorithm(stored string) string` | 识别算法:`"argon2id"`、`"bcrypt"`、`"pbkdf2"`;不识别返回空串 |
+| `crypto.Hash(plain string) (string, error)` | 密码哈希,默认 argon2id |
+| `crypto.HashWith(plain string, alg HashAlg) (string, error)` | 指定算法:`crypto.AlgArgon2id`、`crypto.AlgBcrypt`、`crypto.AlgPBKDF2SHA256` |
+| `crypto.Verify(plain, stored string) bool` | 按前缀分派校验;垃圾输入一律 false |
+| `crypto.Algorithm(stored string) string` | 识别算法:`"argon2id"`、`"bcrypt"`、`"pbkdf2"`;不识别返回空串 |
 
 ## 测试
 

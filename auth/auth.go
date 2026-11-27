@@ -1,7 +1,7 @@
 // Package auth 提供会话认证:不透明 token + Redis 存储(复用 redis 与 crypto),
 // 业务凭据校验接口(用户 AuthChecker / 客户端 ClientChecker)与整组保护中间件。
 //
-// 语义约定(与 Rust 版一致):登录凭据错误 = HTTP 200 + {"code":401,...} 业务信封;
+// 语义约定:登录凭据错误 = HTTP 200 + {"code":401,...} 业务信封;
 // token 缺失/失效 = HTTP 401 + 信封;Redis 等基础设施故障保留 500 信封,不冒充 401。
 package auth
 
@@ -41,7 +41,7 @@ type TokenPair struct {
 }
 
 // TokenResponse 登录/刷新端点的响应体,OAuth2 规范 snake_case
-// (全库唯一非 camelCase 例外,与 Rust 版一致)。
+// (全库唯一非 camelCase 例外)。
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
