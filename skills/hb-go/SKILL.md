@@ -24,7 +24,7 @@ description: 在使用 github.com/cai-zl/hb-go 的 Go/Gin 业务仓库开发或�
 | 猜签名、假定示例适配所有版本；为了凑 API 擅自改框架、引入或升级 hb-go。 | 以业务项目实际选中的版本为准；无法确认时说明缺失证据。 |
 | 在各 handler 重复手拼信封、自建等价分页或上游响应结构，或向调用方暴露底层错误、凭据或令牌。 | 优先复用业务项目已有的统一响应和错误出口；没有时在项目 HTTP 层定义一处标准。采用 hb 信封时用 `hb.Write` / `hb.Envelope`。 |
 | 在采用 `boot.Serve` / `boot.ServeWith` 的项目再写启动/停机逻辑、重复注册 `/healthz` 或 `/readyz`、重建已有客户端/连接池/Hub，或在 handler 内重连。 | 走 `boot.Mount`，复用 `boot.App` 已装配的依赖，新增业务探针须有不同职责和路由。 |
-| 在业务 `Mount` 手动挂载 `/auth/token`、`/auth/refresh`、`/auth/revoke` 或 `/auth/me`，或调用已移除的手动挂载 API；自写 Bearer 解析或直接读 `hb.session` / `hb.token`；把 Redis 故障报成 HTTP 401，或把通过 `Guard` 当成已获资源授权。 | 用 `boot.WithAuth(checker)` 自动挂载固定端点，业务路由仍用 `auth.Guard`、`auth.From[T]` / `auth.Token`；HTTP 401 只用于令牌缺失或失效等认证失败，保留业务授权检查。 |
+| 在业务 `Mount` 手动挂载 `/auth/token`、`/auth/refresh`、`/auth/revoke` 或 `/auth/me`，或调用已移除的手动挂载 API；自写 Bearer 解析或直接读 `hb.session` / `hb.token`；把 Redis 故障报成 HTTP 401，或把通过 `Guard` 当成已获资源授权。 | 用 `boot.WithAuth(checker)` / `boot.WithClientAuth(clientCheck)` 自动挂载固定端点，业务路由仍用 `auth.Guard`、`auth.From[T]` / `auth.Token`；HTTP 401 只用于令牌缺失或失效等认证失败，保留业务授权检查。 |
 | 就地修改 `boot.Snapshot[T]` 返回的共享值；自写等价迁移器或将含 `migrations/` 子目录的原始 embed FS 直接传给 `boot.WithMigrator`。 | 快照只读；迁移用 `boot.WithMigrator` 或 `db.Migrate`，按需先 `fs.Sub` 并处理错误。 |
 | 访问不存在的 `ws.Message.Kind`，默认套 HTTP 信封，或用 `WithWS` 代替握手鉴权与 Origin 限制。 | 用 `msg.Data`；直接传业务值给 `Send`、`SendTo` 或 `Broadcast`，只有已编码的 JSON 才用 `json.RawMessage`。复用业务的握手校验。 |
 | 自制等价密码哈希，用普通 SHA-256 存储密码，或把密码、密钥、令牌写进日志。 | 用 `crypto.Hash` / `crypto.Verify`；日志只记录不会暴露秘密的诊断信息。 |

@@ -144,7 +144,7 @@ func pushTicker(app *boot.App) error {
 }
 ```
 
-不需要登录端点时，省略 `boot.WithAuth`；业务路由不手动注册 `/auth/*`。
+不需要登录端点时，省略 `boot.WithAuth` / `boot.WithClientAuth`；业务路由不手动注册 `/auth/*`。
 
 ## 多模块组织
 
@@ -537,7 +537,7 @@ alg := crypto.Algorithm(h)                      // "argon2id" / "bcrypt" / "pbkd
 | `Config` | `struct { TokenTTL, RefreshTTL time.Duration; Prefix string }`,全部有缺省值 |
 | `TokenResponse` | `struct { AccessToken, RefreshToken, TokenType string; ExpiresIn int64 }`,登录/刷新响应体(snake_case) |
 | `LoginReq`、`RefreshReq`、`RevokeReq` | 请求体:`struct { Username, Password string }`、`struct { RefreshToken string }`、`struct { AccessToken string }` |
-| `TokenPair`、`SessionRecord` | `struct { AccessToken, RefreshToken string }`、`struct { Data json.RawMessage; Peer string; Exp int64 }` |
+| `TokenPair`、`SessionRecord` | `struct { AccessToken, RefreshToken string }`、`struct { Data json.RawMessage; Peer string; Exp int64; Kind string }`(`Kind` 为 `auth.KindUser`/`auth.KindClient`,旧记录读取时补 `KindUser`) |
 
 ### ws
 
