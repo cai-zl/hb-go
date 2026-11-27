@@ -32,7 +32,7 @@ func TestSessionsConfigDefaults(t *testing.T) {
 
 func TestCreateRejectsInvalidJSON(t *testing.T) {
 	sessions := auth.NewSessions(nil, auth.Config{})
-	pair, err := sessions.Create(json.RawMessage("{"))
+	pair, err := sessions.Create(auth.KindUser, json.RawMessage("{"))
 	var me *json.MarshalerError
 	var e *hb.Error
 	if pair != (auth.TokenPair{}) || !errors.As(err, &me) || errors.As(err, &e) {

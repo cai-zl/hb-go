@@ -1,5 +1,5 @@
 // Package auth 提供会话认证:不透明 token + Redis 存储(复用 redis 与 crypto),
-// 业务登录凭据校验接口与整组保护中间件。
+// 业务凭据校验接口(用户 AuthChecker / 客户端 ClientChecker)与整组保护中间件。
 //
 // 语义约定(与 Rust 版一致):登录凭据错误 = HTTP 200 + {"code":401,...} 业务信封;
 // token 缺失/失效 = HTTP 401 + 信封;Redis 等基础设施故障保留 500 信封,不冒充 401。
@@ -49,7 +49,7 @@ type TokenResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
-// LoginReq 登录请求体;AuthChecker 在 /auth/token 时收到它。
+// LoginReq 用户登录请求体;请求未带 grant_type 时 AuthChecker 在 /auth/token 收到它。
 type LoginReq struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -60,12 +60,32 @@ type AuthChecker interface {
 	Check(LoginReq) (json.RawMessage, error)
 }
 
+// ClientReq 客户端登录请求体;请求带 grant_type = "client_credentials" 时
+// ClientChecker 在 /auth/token 收到它。
+type ClientReq struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+// ClientChecker 校验客户端凭据(client_id/client_secret),
+// 返回已编码的合法会话 JSON 或错误。
+type ClientChecker interface {
+	Check(ClientReq) (json.RawMessage, error)
+}
+
+// KindUser / KindClient 是会话身份类型(SessionRecord.Kind 的取值)。
+const (
+	KindUser   = "user"
+	KindClient = "client"
+)
+
 // SessionRecord Redis 里的一条会话记录。两个键互存对方(peer),
 // 吊销/轮换才能从任一 token 找到另一半。
 type SessionRecord struct {
 	Data json.RawMessage `json:"data"`
 	Peer string          `json:"peer"`
-	Exp  int64           `json:"exp"` // access 的过期 unix 秒;refresh 记录恒 0(不判定)
+	Exp  int64           `json:"exp"`  // access 的过期 unix 秒;refresh 记录恒 0(不判定)
+	Kind string          `json:"kind"` // 身份类型 KindUser/KindClient;升级前写入的记录没有该字段,parseRecord 按 KindUser 补齐
 }
 
 // Sessions 会话存储。token 为 32 随机字节 hex;Redis 双键 {prefix}a:{token} /
@@ -102,8 +122,8 @@ func (s *Sessions) rtKey(token string) string { return s.prefix + "r:" + token }
 
 func newToken() string { return crypto.RandomHex(32) }
 
-func recordJSON(data json.RawMessage, peer string, exp int64) (string, error) {
-	rec, err := json.Marshal(SessionRecord{Data: data, Peer: peer, Exp: exp})
+func recordJSON(data json.RawMessage, peer, kind string, exp int64) (string, error) {
+	rec, err := json.Marshal(SessionRecord{Data: data, Peer: peer, Kind: kind, Exp: exp})
 	if err != nil {
 		return "", err
 	}
@@ -115,22 +135,26 @@ func parseRecord(raw string) (SessionRecord, error) {
 	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
 		return rec, fmt.Errorf("auth: session record corrupted: %w", err)
 	}
+	// 升级前签发的记录没有 kind,一律按用户会话处理
+	if rec.Kind == "" {
+		rec.Kind = KindUser
+	}
 	return rec, nil
 }
 
-// Create 签发一对新 token,会话数据为登录时业务写入的任意可序列化值。
-func (s *Sessions) Create(data any) (TokenPair, error) {
+// Create 签发一对新 token;kind 为 KindUser 或 KindClient,会话数据为登录时业务写入的任意可序列化值。
+func (s *Sessions) Create(kind string, data any) (TokenPair, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return TokenPair{}, err
 	}
 	at, rt := newToken(), newToken()
 	exp := time.Now().Add(s.tokenTTL).Unix()
-	recAT, err := recordJSON(raw, rt, exp)
+	recAT, err := recordJSON(raw, rt, kind, exp)
 	if err != nil {
 		return TokenPair{}, err
 	}
-	recRT, err := recordJSON(raw, at, 0)
+	recRT, err := recordJSON(raw, at, kind, 0)
 	if err != nil {
 		return TokenPair{}, err
 	}
@@ -181,11 +205,11 @@ func (s *Sessions) Refresh(refreshToken string) (TokenPair, bool, error) {
 	}
 	at, rt := newToken(), newToken()
 	exp := time.Now().Add(s.tokenTTL).Unix()
-	recAT, err := recordJSON(rec.Data, rt, exp)
+	recAT, err := recordJSON(rec.Data, rt, rec.Kind, exp)
 	if err != nil {
 		return TokenPair{}, false, err
 	}
-	recRT, err := recordJSON(rec.Data, at, 0)
+	recRT, err := recordJSON(rec.Data, at, rec.Kind, 0)
 	if err != nil {
 		return TokenPair{}, false, err
 	}
@@ -317,6 +341,16 @@ func Token(c *gin.Context) string {
 	if v, ok := c.Get(ctxKeyToken); ok {
 		s, _ := v.(string)
 		return s
+	}
+	return ""
+}
+
+// Kind 取当前请求的会话身份类型(KindUser 或 KindClient);须配合 Guard 使用,
+// 未经 Guard 时返回空串。
+func Kind(c *gin.Context) string {
+	if v, ok := c.Get(ctxKeySession); ok {
+		rec, _ := v.(SessionRecord)
+		return rec.Kind
 	}
 	return ""
 }

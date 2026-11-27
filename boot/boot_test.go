@@ -314,7 +314,24 @@ func TestWithAuthRequiresAuthConfig(t *testing.T) {
 		t.Fatal("mounted business routes without [auth]")
 	}}
 	err := boot.ServeWith(cfg, mounts, boot.WithAuth(unusedAuthChecker{}), boot.WithLogging(false))
-	if err == nil || err.Error() != "boot config: WithAuth requires an [auth] section" {
+	if err == nil || err.Error() != "boot config: WithAuth/WithClientAuth requires an [auth] section" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+type unusedClientChecker struct{}
+
+func (unusedClientChecker) Check(auth.ClientReq) (json.RawMessage, error) {
+	panic("client checker called during startup")
+}
+
+func TestWithClientAuthRequiresAuthConfig(t *testing.T) {
+	cfg := mustParse(t, "port = 1\nadvertise_ip = \"127.0.0.1\"")
+	mounts := []boot.Mount{func(*boot.App, *gin.RouterGroup) {
+		t.Fatal("mounted business routes without [auth]")
+	}}
+	err := boot.ServeWith(cfg, mounts, boot.WithClientAuth(unusedClientChecker{}), boot.WithLogging(false))
+	if err == nil || err.Error() != "boot config: WithAuth/WithClientAuth requires an [auth] section" {
 		t.Fatalf("err = %v", err)
 	}
 }

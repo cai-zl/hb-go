@@ -12,20 +12,41 @@ import (
 	"github.com/cai-zl/hb-go/auth"
 )
 
+// tokenReq 是 /auth/token 的请求体:匿名内嵌两类登录字段,grant_type 决定
+// 交给 AuthChecker 还是 ClientChecker。
+type tokenReq struct {
+	GrantType string `json:"grant_type"` // 空/"password" = 用户登录;"client_credentials" = 客户端登录
+	auth.LoginReq
+	auth.ClientReq
+}
+
 // MountAuth 挂载固定的鉴权端点,仅供 boot 装配。业务使用 boot.WithAuth。
-func MountAuth(rg *gin.RouterGroup, sessions *auth.Sessions, check auth.AuthChecker) {
+// check 与 clientCheck 可为 nil,未配置的登录方式按不支持的 grant_type 拒绝。
+func MountAuth(rg *gin.RouterGroup, sessions *auth.Sessions, check auth.AuthChecker, clientCheck auth.ClientChecker) {
 	rg.POST("/auth/token", func(c *gin.Context) {
-		var req auth.LoginReq
+		var req tokenReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			hb.Write(c, http.StatusOK, hb.Envelope{Code: 400, Message: "invalid request body"})
 			return
 		}
-		data, err := check.Check(req)
+		kind := auth.KindUser
+		var data json.RawMessage
+		var err error
+		switch {
+		case (req.GrantType == "" || req.GrantType == "password") && check != nil:
+			data, err = check.Check(req.LoginReq)
+		case req.GrantType == "client_credentials" && clientCheck != nil:
+			kind = auth.KindClient
+			data, err = clientCheck.Check(req.ClientReq)
+		default:
+			hb.Write(c, http.StatusOK, hb.Envelope{Code: 400, Message: "unsupported grant type"})
+			return
+		}
 		if err != nil {
 			writeAuthRouteError(c, err)
 			return
 		}
-		pair, err := sessions.Create(data)
+		pair, err := sessions.Create(kind, data)
 		if err != nil {
 			writeAuthRouteError(c, err)
 			return

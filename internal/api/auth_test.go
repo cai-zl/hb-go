@@ -37,11 +37,24 @@ type authCheckFunc func(auth.LoginReq) (json.RawMessage, error)
 
 func (f authCheckFunc) Check(req auth.LoginReq) (json.RawMessage, error) { return f(req) }
 
-func newEngine(t *testing.T, sessions *auth.Sessions, check auth.AuthChecker) *gin.Engine {
+type testClientChecker struct{}
+
+func (testClientChecker) Check(req auth.ClientReq) (json.RawMessage, error) {
+	if req.ClientID == "svc" && req.ClientSecret == "s3cret" {
+		return json.Marshal(sessionData{UID: 9, Role: "client"})
+	}
+	return nil, hb.Err(401, "invalid client credentials")
+}
+
+type clientCheckFunc func(auth.ClientReq) (json.RawMessage, error)
+
+func (f clientCheckFunc) Check(req auth.ClientReq) (json.RawMessage, error) { return f(req) }
+
+func newEngine(t *testing.T, sessions *auth.Sessions, check auth.AuthChecker, clientCheck auth.ClientChecker) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	api.MountAuth(&r.RouterGroup, sessions, check)
+	api.MountAuth(&r.RouterGroup, sessions, check, clientCheck)
 	return r
 }
 
@@ -71,7 +84,7 @@ func do(t *testing.T, r http.Handler, method, path, authorization, body string) 
 }
 
 func TestBearerThreeStates(t *testing.T) {
-	r := newEngine(t, nil, testAuthChecker{})
+	r := newEngine(t, nil, testAuthChecker{}, nil)
 	for _, header := range []string{"", "Basic abc", "Bearer "} {
 		status, env := do(t, r, "GET", "/auth/me", header, "")
 		if status != 401 || env.Code != 401 || env.Message != "unauthorized" || env.Data != nil {
@@ -85,11 +98,50 @@ func TestAuthMalformedBodies(t *testing.T) {
 		t.Fatal("checker called for malformed JSON")
 		return nil, nil
 	})
-	r := newEngine(t, nil, check)
+	r := newEngine(t, nil, check, nil)
 	for _, path := range []string{"/auth/token", "/auth/refresh", "/auth/revoke"} {
 		status, env := do(t, r, "POST", path, "", "{oops")
 		if status != 200 || env.Code != 400 || env.Message != "invalid request body" || env.Data != nil {
 			t.Fatalf("POST %s: HTTP %d, %+v; want HTTP 200, code 400, invalid request body without data", path, status, env)
+		}
+	}
+}
+
+func TestTokenGrantType(t *testing.T) {
+	const input = `{"grant_type":"client_credentials","client_id":"svc","client_secret":"bad"}`
+	seen := clientCheckFunc(func(req auth.ClientReq) (json.RawMessage, error) {
+		if req.ClientID != "svc" || req.ClientSecret != "bad" {
+			t.Fatalf("client checker received %+v; want bound client credentials", req)
+		}
+		return nil, hb.Err(401, "invalid client credentials")
+	})
+	never := authCheckFunc(func(auth.LoginReq) (json.RawMessage, error) {
+		t.Fatal("user checker called for a non-user grant")
+		return nil, nil
+	})
+	pwd := authCheckFunc(func(req auth.LoginReq) (json.RawMessage, error) {
+		if req.Username != "alice" || req.Password != "wonderland" {
+			t.Fatalf("user checker received %+v; want bound user credentials", req)
+		}
+		return nil, hb.Err(401, "invalid username or password")
+	})
+	for _, tc := range []struct {
+		name        string
+		clientCheck auth.ClientChecker
+		userCheck   auth.AuthChecker
+		body        string
+		code        int
+		message     string
+	}{
+		{"client credentials", seen, never, input, 401, "invalid client credentials"},
+		{"client login not configured", nil, never, input, 400, "unsupported grant type"},
+		{"password grant", nil, pwd, `{"grant_type":"password","username":"alice","password":"wonderland"}`, 401, "invalid username or password"},
+		{"unknown grant type", testClientChecker{}, never, `{"grant_type":"user","username":"alice","password":"wonderland"}`, 400, "unsupported grant type"},
+	} {
+		r := newEngine(t, nil, tc.userCheck, tc.clientCheck)
+		status, env := do(t, r, "POST", "/auth/token", "", tc.body)
+		if status != 200 || env.Code != tc.code || env.Message != tc.message || env.Data != nil {
+			t.Fatalf("%s: HTTP %d, %+v; want HTTP 200, code %d, %q without data", tc.name, status, env, tc.code, tc.message)
 		}
 	}
 }
@@ -112,7 +164,7 @@ func TestLoginCheckErrors(t *testing.T) {
 			}
 			return nil, tc.err
 		})
-		r := newEngine(t, nil, check)
+		r := newEngine(t, nil, check, nil)
 		status, env := do(t, r, "POST", "/auth/token", "", input)
 		if status != 200 || env.Code != tc.code || env.Message != tc.message || env.Data != nil {
 			t.Fatalf("%s: HTTP %d, %+v; want HTTP 200, code %d, %q without data", tc.name, status, env, tc.code, tc.message)
@@ -122,7 +174,7 @@ func TestLoginCheckErrors(t *testing.T) {
 
 func TestLoginRejectsInvalidSessionJSON(t *testing.T) {
 	check := authCheckFunc(func(auth.LoginReq) (json.RawMessage, error) { return json.RawMessage("{"), nil })
-	r := newEngine(t, auth.NewSessions(nil, auth.Config{}), check)
+	r := newEngine(t, auth.NewSessions(nil, auth.Config{}), check, nil)
 	status, env := do(t, r, "POST", "/auth/token", "", `{"username":"alice","password":"wonderland"}`)
 	if status != 200 || env.Code != 500 || env.Message != "internal error" || env.Data != nil {
 		t.Fatalf("invalid session JSON: HTTP %d, %+v; want HTTP 200, code 500, internal error without data", status, env)
@@ -151,13 +203,16 @@ func TestAuthFlow(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	sessions := auth.NewSessions(client, auth.Config{})
-	r := newEngine(t, sessions, testAuthChecker{})
+	r := newEngine(t, sessions, testAuthChecker{}, testClientChecker{})
 	r.GET("/private/who", auth.Guard(sessions), func(c *gin.Context) {
 		data, err := auth.From[sessionData](c)
 		if err != nil {
 			t.Fatalf("auth.From: %v", err)
 		}
 		hb.Write(c, http.StatusOK, hb.Envelope{Code: 0, Message: "ok", Data: data})
+	})
+	r.GET("/private/kind", auth.Guard(sessions), func(c *gin.Context) {
+		hb.Write(c, http.StatusOK, hb.Envelope{Code: 0, Message: "ok", Data: auth.Kind(c)})
 	})
 
 	status, env := do(t, r, "POST", "/auth/token", "", `{"username":"alice","password":"wrong"}`)
@@ -227,5 +282,26 @@ func TestAuthFlow(t *testing.T) {
 	}
 	if status, _ = do(t, r, "GET", "/auth/me", "Bearer "+other.AccessToken, ""); status != 200 {
 		t.Fatalf("touched token: HTTP %d, want 200", status)
+	}
+
+	// 客户端登录:grant_type 分流到 ClientChecker,会话带 kind,refresh 轮换后保持
+	status, env = do(t, r, "POST", "/auth/token", "", `{"grant_type":"client_credentials","client_id":"svc","client_secret":"bad"}`)
+	if status != 200 || env.Code != 401 || env.Message != "invalid client credentials" || env.Data != nil {
+		t.Fatalf("wrong client secret: HTTP %d, %+v; want HTTP 200, code 401 without data", status, env)
+	}
+	status, env = do(t, r, "POST", "/auth/token", "", `{"grant_type":"client_credentials","client_id":"svc","client_secret":"s3cret"}`)
+	clientTokens := requireTokenResponse(t, status, env, sessions)
+	t.Cleanup(func() { _, _ = sessions.Revoke(clientTokens.AccessToken) })
+	for _, tc := range []struct{ token, kind string }{{other.AccessToken, auth.KindUser}, {clientTokens.AccessToken, auth.KindClient}} {
+		if status, env = do(t, r, "GET", "/private/kind", "Bearer "+tc.token, ""); status != 200 || string(env.Data) != `"`+tc.kind+`"` {
+			t.Fatalf("GET /private/kind with %s token: HTTP %d, %+v; want data %q", tc.kind, status, env, tc.kind)
+		}
+	}
+	body, _ = json.Marshal(auth.RefreshReq{RefreshToken: clientTokens.RefreshToken})
+	status, env = do(t, r, "POST", "/auth/refresh", "", string(body))
+	rotated := requireTokenResponse(t, status, env, sessions)
+	t.Cleanup(func() { _, _ = sessions.Revoke(rotated.AccessToken) })
+	if status, env = do(t, r, "GET", "/private/kind", "Bearer "+rotated.AccessToken, ""); status != 200 || string(env.Data) != `"client"` {
+		t.Fatalf("client kind after refresh: HTTP %d, %+v; want data \"client\"", status, env)
 	}
 }

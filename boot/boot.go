@@ -291,17 +291,18 @@ type wsRoute struct {
 
 // Boot 一次启动的全部选项。
 type Boot struct {
-	mounts    []Mount
-	migrator  fs.FS
-	hooks     []Hook
-	logging   bool
-	nacos     *nacos.Nacos
-	authCheck auth.AuthChecker
-	wsRoutes  []wsRoute
-	onClose   func(id string)
+	mounts      []Mount
+	migrator    fs.FS
+	hooks       []Hook
+	logging     bool
+	nacos       *nacos.Nacos
+	authCheck   auth.AuthChecker
+	clientCheck auth.ClientChecker
+	wsRoutes    []wsRoute
+	onClose     func(id string)
 }
 
-// Option 函数式选项(WithMigrator/WithHook/WithAuth/WithWS/WithWSClose/WithLogging/WithNacos)。
+// Option 函数式选项(WithMigrator/WithHook/WithAuth/WithClientAuth/WithWS/WithWSClose/WithLogging/WithNacos)。
 type Option func(*Boot)
 
 // WithMigrator 挂接内嵌迁移(业务仓库 //go:embed migrations/*.sql 后传入),
@@ -318,6 +319,14 @@ func WithHook(h Hook) Option { return func(b *Boot) { b.hooks = append(b.hooks, 
 // WithAuth 让 boot 自动挂载四个 /auth/* 端点,需要配置 [auth] 和 [redis]。
 // 业务只负责校验登录凭据并返回已编码的会话 JSON。多次调用时后者覆盖前者。
 func WithAuth(check auth.AuthChecker) Option { return func(b *Boot) { b.authCheck = check } }
+
+// WithClientAuth 让 boot 自动挂载四个 /auth/* 端点并启用客户端登录
+// (POST /auth/token 带 grant_type = "client_credentials"),需要配置 [auth] 和 [redis]。
+// 业务只负责校验 client_id/client_secret 并返回已编码的会话 JSON。
+// 可与 WithAuth 只用其一;多次调用时后者覆盖前者。
+func WithClientAuth(check auth.ClientChecker) Option {
+	return func(b *Boot) { b.clientCheck = check }
+}
 
 // WithWS 挂一个 WebSocket 端点,可多次调用。消息回调收 Conn(握手期采集的
 // IP/请求头)与客户端消息,按到达顺序保序执行。
@@ -387,8 +396,8 @@ type hotReload struct {
 }
 
 func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
-	if b.authCheck != nil && cfg.Auth == nil {
-		return errors.New("boot config: WithAuth requires an [auth] section")
+	if (b.authCheck != nil || b.clientCheck != nil) && cfg.Auth == nil {
+		return errors.New("boot config: WithAuth/WithClientAuth requires an [auth] section")
 	}
 
 	var applyLog func(string)
@@ -458,8 +467,8 @@ func (b *Boot) run(cfg *Config, nc *nacos.Nacos, hot *hotReload) error {
 
 	// 路由:hb.New 预装 404/405 框架信封;auth 端点 + 业务挂载 + WS 端点 + 健康检查
 	e := hb.New()
-	if b.authCheck != nil {
-		api.MountAuth(&e.RouterGroup, app.Sessions, b.authCheck)
+	if b.authCheck != nil || b.clientCheck != nil {
+		api.MountAuth(&e.RouterGroup, app.Sessions, b.authCheck, b.clientCheck)
 	}
 	for _, m := range b.mounts {
 		m(app, &e.RouterGroup)

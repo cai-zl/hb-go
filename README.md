@@ -262,12 +262,12 @@ boot.ServeWith(cfg, mounts, opts...)             // 显式配置;配 WithNacos �
   `app.Logger`(`*zap.SugaredLogger`)或全局 `zap.S()`,级别走 `log_level`(优先级
   `log_level` > `LOG_LEVEL` > `info`,可热更);boot 初始化之前的启动失败自行打 stderr。
 - 选项:`WithMigrator(embed.FS)`、`WithHook(func(*App) error)`(可多次,顺序执行)、
-  `WithAuth(checker)`、`WithWS(path, onMessage)`、`WithWSClose(path, onMessage, onClose)`、
+  `WithAuth(checker)`、`WithClientAuth(clientCheck)`、`WithWS(path, onMessage)`、`WithWSClose(path, onMessage, onClose)`、
   `WithLogging(false)`(自带日志时关掉内置初始化)、`WithNacos(n)`。
 - 启动日志的 `starting` 行带 `commit`:自动取 `go build` 嵌入的主模块 git 提交(形如 `a1b2c3d 2026-01-02T15:04:05Z`,工作区有改动加 `(dirty)`);源码不含 `.git` 的构建(如容器镜像)可注入覆盖:
   `go build -ldflags "-X github.com/cai-zl/hb-go/boot.Commit=$(git rev-parse --short HEAD)"`,都没有时记 `unknown`。
 - 启动顺序:日志(log_level > LOG_LEVEL > info)→ 读配置 → 按段连接依赖 →
-  迁移 → 钩子 → auth 端点(有 `WithAuth` 时) → 业务及 WS 路由 + `/healthz` `/readyz`(实测 db/redis,不含 s3)→
+  迁移 → 钩子 → auth 端点(有 `WithAuth`/`WithClientAuth` 时) → 业务及 WS 路由 + `/healthz` `/readyz`(实测 db/redis,不含 s3)→
   监听 → 注册 → 热更监听 → SIGINT/SIGTERM 优雅停机 + 反注册。
 - 业务配置写 `[extra]`,类型化快照读取,推送后自动刷新:
 
@@ -292,9 +292,12 @@ Redis 双键会话(`{prefix}a:{token}` / `{prefix}r:{token}` 互存对端),acces
 有效期由记录内 exp 判定,键 TTL = refresh TTL。
 
 配置 `[auth]` 和 `[redis]` 后，boot 会组装 `app.Sessions`。只有向 `boot.Serve` 或
-`boot.ServeWith` 传入 `boot.WithAuth(checker)`，boot 才会自动挂载 `auth` 包实现的
+`boot.ServeWith` 传入 `boot.WithAuth(checker)`(用户登录)或 `boot.WithClientAuth(clientCheck)`
+(客户端登录),boot 才会自动挂载 `auth` 包实现的
 `POST /auth/token`、`POST /auth/refresh`、`POST /auth/revoke`、`GET /auth/me`。
-传入该选项时两段配置均必需，不需要在业务 `Mount` 中注册这些端点。
+传入任一选项时两段配置均必需，不需要在业务 `Mount` 中注册这些端点。
+`POST /auth/token` 按 `grant_type` 分流:缺省(或空)或 `"password"`(RFC 6749 §4.3)走用户 `AuthChecker`,
+`"client_credentials"` 走客户端 `ClientChecker`,其他值返回业务码 400 `unsupported grant type`。
 
 ```go
 // 使用 encoding/json 和 hb-go 的 auth、boot、password 包。
@@ -337,6 +340,26 @@ func mountPrivate(app *boot.App, rg *gin.RouterGroup) {
 
 响应为 OAuth2 风格 snake_case:`{"access_token":..,"refresh_token":..,"token_type":"Bearer","expires_in":7200}`。
 token 缺失/失效 → HTTP 401 + 信封;凭据错 → HTTP 200 + 业务码 401。
+
+客户端登录与用户登录共用同一套 token 对与 refresh/revoke/TTL 逻辑;会话记录带身份类型
+`kind`(`auth.KindUser` / `auth.KindClient`),`auth.Kind(c)` 在 `Guard` 后读取,
+是否限制路由由业务自行判断。升级前签发的会话记录没有 `kind`,读取时按用户会话处理。
+
+```go
+// 实现 auth.ClientChecker;client_id/client_secret 错时返回业务码 401 的错误。
+type clientChecker struct{}
+
+func (clientChecker) Check(req auth.ClientReq) (json.RawMessage, error) {
+	if req.ClientID != "svc" || req.ClientSecret != storedSecret(req.ClientID) {
+		return nil, hb.Err(401, "invalid client credentials")
+	}
+	return json.Marshal(map[string]any{"client_id": req.ClientID})
+}
+
+func serveWithClientAuth(cfg *boot.Config) error {
+	return boot.ServeWith(cfg, []boot.Mount{mountPrivate}, boot.WithClientAuth(clientChecker{}))
+}
+```
 
 ```go
 auth.NewSessions(redisClient, auth.Config{
@@ -482,6 +505,7 @@ alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2
 | `WithMigrator(fsys fs.FS) Option` | 启动时跑迁移;FS 根下直接是 `序号_描述.sql`(`//go:embed migrations/*.sql` 须传 `fs.Sub(migrations, "migrations")`) |
 | `WithHook(h Hook) Option` | 追加启动钩子,可多次,按调用顺序执行 |
 | `WithAuth(check auth.AuthChecker) Option` | 自动挂载四个 auth 端点;需要 `[auth]` 和 `[redis]`,多次调用时后者覆盖前者 |
+| `WithClientAuth(check auth.ClientChecker) Option` | 同 `WithAuth`,并启用客户端登录(`grant_type = "client_credentials"`);可与 `WithAuth` 只用其一 |
 | `WithWS(path string, onMessage func(*App, *ws.Conn, ws.Message)) Option` | 挂一个 WebSocket 端点,可多次 |
 | `WithWSClose(path string, onMessage func(*App, *ws.Conn, ws.Message), onClose func(id string)) Option` | 同 `WithWS`,另带断连回调(每 Hub 一个,后者覆盖前者) |
 | `WithLogging(enabled bool) Option` | `false` 关闭内置 zap 初始化,同时失去热更监听 |
@@ -499,11 +523,13 @@ alg := password.Algorithm(h)                  // "argon2id" / "bcrypt" / "pbkdf2
 | API | 说明 |
 | --- | --- |
 | `AuthChecker` | `interface { Check(LoginReq) (json.RawMessage, error) }`,业务校验凭据后返回已编码的会话 JSON |
+| `ClientChecker` | `interface { Check(ClientReq) (json.RawMessage, error) }`,业务校验 `client_id`/`client_secret`;`grant_type = "client_credentials"` 时收到请求 |
 | `Guard(sessions *Sessions) gin.HandlerFunc` | 整组路由保护:校验 Bearer token,通过后注入会话 |
 | `From[T any](c *gin.Context) (T, error)` | 取登录时写入的会话数据,须配 `Guard` |
 | `Token(c *gin.Context) string` | 取本次请求的 access token(`Guard` 注入) |
+| `Kind(c *gin.Context) string` | 取会话身份类型(`auth.KindUser`/`auth.KindClient`),须配 `Guard` |
 | `NewSessions(client *goredis.Client, cfg Config) *Sessions` | 建会话存储并应用缺省值 |
-| `Sessions.Create(data any) (TokenPair, error)` | 签发一对新 token |
+| `Sessions.Create(kind string, data any) (TokenPair, error)` | 签发一对新 token;`kind` 为 `auth.KindUser` 或 `auth.KindClient` |
 | `Sessions.Get(token string) (SessionRecord, bool, error)` | 按 access token 取会话记录;键不存在或已过期 `ok=false` |
 | `Sessions.Refresh(refreshToken string) (TokenPair, bool, error)` | 轮换出新对,旧对随即失效 |
 | `Sessions.Revoke(accessToken string) (bool, error)` | 吊销会话,幂等,返回是否存在过 |
