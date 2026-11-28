@@ -17,6 +17,13 @@ description: 在使用 github.com/cai-zl/hb-go 的 Go/Gin 业务仓库开发或�
 - **保留业务职责和协议。** 直接注册原生 `func(c *gin.Context)`；凭据核验、角色/资源授权、数据查询、校验及业务码仍由业务负责。沿用旧 hb 协议时，常规成功和失败均为 HTTP 200，通过信封的 `code` 表达结果。头部、文件下载和自定义协议由 Gin 控制，写完直接返回；内置鉴权、404/405、就绪端点保留各自的状态规则。使用可选依赖前核对对应配置，缺项时报告，不在请求中临时补连。
 - **交付前核对。** 确认改动调用了对应框架入口且没有新增等价实现；对受影响的状态码、信封字段或业务授权跑定向测试。不把未运行的检查报为通过。
 
+## 项目风格约定
+
+- **字段序列化**：JSON 字段统一 camelCase（如 `pageSize`、`accessToken`），不自创第二种格式；特定字段按协议例外——`auth.TokenResponse` 遵循 OAuth2 规范用 snake_case（`access_token`），TOML 配置键一律 snake_case。
+- **目录结构**：纯后端项目按 Go 生态风格组织，入口统一为 `main.go` 且位于后端目录的根目录（纯后端即仓库根目录）；前后端一体项目顶层分 `backend/` 与 `frontend/`，后端目录仍按 Go 生态风格，入口为 `backend/main.go`。
+- **编码风格**：遵循 Google Go Style Guide（https://google.github.io/styleguide/go）。
+- **镜像构建**：多阶段 Dockerfile——构建 stage 与运行 stage 分离，运行镜像取最小基础镜像、只拷最终产物。构建 stage：先拷依赖清单（`go.mod`/`go.sum`、`package.json`/lock 等）装依赖再拷源码，让依赖不变时命中层缓存；前端产物经 go:embed 嵌入时必须先构建前端再 `go build`；Go 统一纯静态编译（`CGO_ENABLED=0`、`go build -trimpath -ldflags "-s -w"`）。运行 stage：非 root 用户运行，应用运行期要写的目录（如 nacos-sdk 的 `log/`）预建并授权，框架的生产模式环境变量按需设置（如 `GIN_MODE=release`），exec 形式 `ENTRYPOINT`，只 `EXPOSE` 实际监听的端口。VCS 信息不进构建上下文时，提交号用 `ARG` 显式注入（如 `-X github.com/cai-zl/hb-go/boot.Commit=$COMMIT`）。配套构建脚本（如 `build.sh`）：`#!/usr/bin/env sh`、`set -e`、`cd "$(dirname "$0")"`，关闭 buildx 默认 attestation（`BUILDX_NO_DEFAULT_ATTESTATIONS=1`）保持镜像清单干净；Dockerfile 文件头注释交代各阶段职责与关键取舍。
+
 ## 禁止项
 
 | 禁止 | 改用或处理方式 |
